@@ -279,7 +279,7 @@ export default function Home() {
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold" style={{ color: '#E13A55' }}>{t.title}</h1>
+            <h1 className="text-2xl font-bold" style={{ color: '#7C3AED' }}>{t.title}</h1></h1>
             <p className="text-sm text-gray-500">{t.subtitle}</p>
           </div>
           <div className="flex items-center space-x-2">

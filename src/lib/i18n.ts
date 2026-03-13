@@ -1,12 +1,12 @@
 export const translations = {
   zh: {
     // Header
-    title: 'PDF Guru',
-    subtitle: 'AI PDF 摘要工具',
+    title: 'SumifyPDF',
+    subtitle: 'AI 智能 PDF 摘要',
     
     // Hero
-    heroTitle: 'AI PDF 摘要工具',
-    heroSubtitle: '支持文字 PDF 和扫描件，一键生成智能摘要',
+    heroTitle: '秒读任何 PDF',
+    heroSubtitle: '上传 PDF，AI 立即提炼关键内容 — 支持文字版和扫描件',
     featureBatch: '批量处理',
     featureChat: '智能对话',
     featureLanguage: '中英文支持',
@@ -73,12 +73,12 @@ export const translations = {
   
   en: {
     // Header
-    title: 'PDF Guru',
+    title: 'SumifyPDF',
     subtitle: 'AI PDF Summarizer',
     
     // Hero
-    heroTitle: 'AI PDF Summarizer',
-    heroSubtitle: 'Support text PDFs and scanned documents, generate smart summaries instantly',
+    heroTitle: 'Read Less. Know More.',
+    heroSubtitle: 'Upload any PDF and get an AI-powered summary in seconds — text or scanned.',
     featureBatch: 'Batch Processing',
     featureChat: 'Smart Chat',
     featureLanguage: 'Multi-language',
