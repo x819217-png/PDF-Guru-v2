@@ -1,0 +1,12 @@
+[build]
+  command = "npx @cloudflare/next-on-pages@1"
+  destination = ".vercel/output/static"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[rules]]
+  type = "include"
+  on = "/"
+  type = "rewrite"
+  to = "/index.html"

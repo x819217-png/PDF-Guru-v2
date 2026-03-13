@@ -1,6 +1,11 @@
+// @ts-check
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  reactStrictMode: true,
+  // 支持 Cloudflare Pages
+  experimental: {
+    runtime: 'edge',
+  },
 };
 
 module.exports = nextConfig;

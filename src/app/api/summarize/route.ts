@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+export const runtime = 'edge';
+
 // 支持的模型配置
 const MODELS = {
   // OpenAI
