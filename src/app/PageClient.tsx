@@ -14,6 +14,8 @@ export default function Home() {
   const [language, setLanguage] = useState<Language>('zh');
   const [files, setFiles] = useState<File[]>([]);
   const [summary, setSummary] = useState<string>('');
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [template, setTemplate] = useState<'default' | 'academic' | 'business' | 'simple'>('default');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string>('');
   const [isDragOver, setIsDragOver] = useState(false);
@@ -198,6 +200,8 @@ export default function Home() {
           text: allText,
           filename: files.map(f => f.name).join(', '),
           batch: files.length > 1,
+          template: template,
+          extractKeywords: true,
         }),
       });
 
@@ -208,6 +212,7 @@ export default function Home() {
 
       const data = await response.json();
       setSummary(data.summary);
+      setKeywords(data.keywords || []);
       setProgress(100);
       setStatus('success');
       setStatusText('');
@@ -396,6 +401,57 @@ export default function Home() {
           </div>
         )}
 
+        {/* 模板选择 */}
+        {files.length > 0 && status === 'idle' && (
+          <div className="mt-4 bg-white p-4 rounded-xl border">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              {language === 'zh' ? '摘要风格' : 'Summary Style'}
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setTemplate('default')}
+                className={`px-4 py-2 rounded-lg text-sm ${
+                  template === 'default'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {language === 'zh' ? '📄 通用' : '📄 General'}
+              </button>
+              <button
+                onClick={() => setTemplate('academic')}
+                className={`px-4 py-2 rounded-lg text-sm ${
+                  template === 'academic'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {language === 'zh' ? '🎓 学术' : '🎓 Academic'}
+              </button>
+              <button
+                onClick={() => setTemplate('business')}
+                className={`px-4 py-2 rounded-lg text-sm ${
+                  template === 'business'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {language === 'zh' ? '💼 商业' : '💼 Business'}
+              </button>
+              <button
+                onClick={() => setTemplate('simple')}
+                className={`px-4 py-2 rounded-lg text-sm ${
+                  template === 'simple'
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                {language === 'zh' ? '✨ 简洁' : '✨ Simple'}
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* 处理按钮 */}
         {files.length > 0 && status === 'idle' && (
           <div className="mt-6 flex justify-center">
@@ -432,6 +488,25 @@ export default function Home() {
         {/* 摘要结果 */}
         {status === 'success' && summary && (
           <div className="mt-8 space-y-6 fade-in">
+            {/* 关键词 */}
+            {keywords.length > 0 && (
+              <div className="bg-white rounded-xl border p-4">
+                <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  {language === 'zh' ? '🏷️ 关键词' : '🏷️ Keywords'}
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {keywords.map((keyword, i) => (
+                    <span
+                      key={i}
+                      className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm"
+                    >
+                      {keyword}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 摘要内容 */}
             <div className="bg-white rounded-xl border p-6">
               <div className="flex justify-between items-center mb-4">

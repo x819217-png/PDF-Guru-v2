@@ -107,7 +107,7 @@ async function callAI(modelName: string, messages: { role: string; content: stri
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { text, question, summary, model } = body;
+    const { text, question, summary, model, template, extractKeywords, batch } = body;
     const selectedModel = model || DEFAULT_MODEL;
 
     // 追问场景
@@ -135,10 +135,31 @@ export async function POST(request: NextRequest) {
     // 截取文本避免超出 token 限制
     const truncatedText = text.slice(0, 15000);
 
+    // 根据模板选择不同的 prompt
+    let systemPrompt = '';
+    switch (template) {
+      case 'academic':
+        systemPrompt = '你是一个学术文献摘要助手。请生成结构化的学术摘要，包含：1）研究背景与目的；2）研究方法；3）主要发现；4）结论与意义。使用学术语言，保持客观严谨。';
+        break;
+      case 'business':
+        systemPrompt = '你是一个商业文档摘要助手。请生成商业报告摘要，包含：1）核心观点；2）关键数据与指标；3）行动建议；4）风险与机会。使用简洁专业的商业语言。';
+        break;
+      case 'simple':
+        systemPrompt = '你是一个文档摘要助手。请用最简单易懂的语言总结文档，包含：1）这篇文档讲什么；2）3-5个关键要点；3）为什么重要。避免专业术语，像给朋友解释一样。';
+        break;
+      default:
+        systemPrompt = '你是一个专业的文档摘要助手。请仔细阅读用户提供的文档内容，然后生成一个简洁、结构化的摘要。要求：1）用中文输出；2）包含文档的主要主题和目的；3）列出关键内容要点（3-5个）；4）标注文档类型。';
+    }
+
+    // 批量对比分析
+    if (batch) {
+      systemPrompt += '\n\n这是多个文档的内容，请生成对比分析摘要，突出各文档的异同点、共同主题和独特观点。';
+    }
+
     const messages = [
       {
         role: 'system',
-        content: '你是一个专业的文档摘要助手。请仔细阅读用户提供的文档内容，然后生成一个简洁、结构化的摘要。要求：1）用中文输出；2）包含文档的主要主题和目的；3）列出关键内容要点（3-5个）；4）标注文档类型。',
+        content: systemPrompt,
       },
       {
         role: 'user',
@@ -147,7 +168,28 @@ export async function POST(request: NextRequest) {
     ];
 
     const aiSummary = await callAI(selectedModel, messages);
-    return NextResponse.json({ summary: aiSummary });
+
+    // 提取关键词
+    let keywords: string[] = [];
+    if (extractKeywords) {
+      const keywordMessages = [
+        {
+          role: 'system',
+          content: '你是一个关键词提取助手。请从文档中提取 5-10 个最重要的关键词或短语，用逗号分隔，只返回关键词列表，不要其他内容。',
+        },
+        {
+          role: 'user',
+          content: `文档内容：\n${truncatedText.slice(0, 5000)}`,
+        },
+      ];
+      const keywordResult = await callAI(selectedModel, keywordMessages);
+      keywords = keywordResult.split(/[,，、]/).map((k: string) => k.trim()).filter((k: string) => k);
+    }
+
+    return NextResponse.json({ 
+      summary: aiSummary,
+      keywords: keywords.length > 0 ? keywords : undefined
+    });
 
   } catch (error) {
     console.error('API Error:', error);
