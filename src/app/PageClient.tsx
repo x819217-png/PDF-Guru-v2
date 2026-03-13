@@ -803,14 +803,14 @@ export default function Home() {
           </div>
         )}
 
-        {/* 处理按钮 */}
+        {/* 处理按钮 - 始终显示 */}
         {files.length > 0 && status === 'idle' && (
-          <div className="mt-6 flex justify-center">
+          <div className="mt-6 flex justify-center pb-8">
             <button
               onClick={handleSubmit}
-              className="btn-primary px-8 py-3 rounded-lg font-medium text-lg"
+              className="btn-primary px-8 py-3 rounded-lg font-medium text-lg shadow-lg"
             >
-              {t.startProcessing} ({files.length} {language === 'zh' ? '个文件' : 'files'})
+              🚀 {t.startProcessing} ({files.length} {language === 'zh' ? '个文件' : 'files'})
             </button>
           </div>
         )}
