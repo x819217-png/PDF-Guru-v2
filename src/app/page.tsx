@@ -16,7 +16,6 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pdfLibLoaded, setPdfLibLoaded] = useState(false);
 
-  // 动态加载 pdf.js
   useEffect(() => {
     import('pdfjs-dist').then((pdfjs) => {
       pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.js';
@@ -25,12 +24,9 @@ export default function Home() {
     });
   }, []);
 
-  // 提取 PDF 文本
   const extractPDFText = async (pdfFile: File): Promise<string> => {
     const pdfjsLib = (window as any).pdfjsLib;
-    if (!pdfjsLib) {
-      throw new Error('PDF 库加载失败，请刷新页面重试');
-    }
+    if (!pdfjsLib) throw new Error('PDF 库加载失败');
 
     const arrayBuffer = await pdfFile.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -41,53 +37,39 @@ export default function Home() {
     for (let i = 1; i <= numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items
-        .map((item: any) => item.str)
-        .join(' ');
+      const pageText = textContent.items.map((item: any) => item.str).join(' ');
       fullText += pageText + '\n\n';
-      
-      setProgress(Math.round((i / numPages) * 50)); // 文本提取占 50%
+      setProgress(Math.round((i / numPages) * 50));
     }
 
     return fullText;
   };
 
-  // OCR 识别（将 PDF 转为图片后识别）
   const ocrPDF = async (pdfFile: File): Promise<string> => {
     const pdfjsLib = (window as any).pdfjsLib;
-    if (!pdfjsLib) {
-      throw new Error('PDF 库加载失败');
-    }
+    if (!pdfjsLib) throw new Error('PDF 库加载失败');
 
     const arrayBuffer = await pdfFile.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     
     let fullText = '';
-    const numPages = Math.min(pdf.numPages, 10); // 限制最多 10 页
+    const numPages = Math.min(pdf.numPages, 10);
 
     for (let i = 1; i <= numPages; i++) {
       setStatusText(`正在识别第 ${i}/${numPages} 页...`);
-      setProgress(50 + Math.round((i / numPages) * 40)); // OCR 占 40%
+      setProgress(50 + Math.round((i / numPages) * 40));
 
       const page = await pdf.getPage(i);
       const viewport = page.getViewport({ scale: 2.0 });
       
-      // 创建 canvas
       const canvas = document.createElement('canvas');
       const context = canvas.getContext('2d');
       canvas.height = viewport.height;
       canvas.width = viewport.width;
 
-      // 渲染 PDF 页面到 canvas
-      await page.render({
-        canvasContext: context!,
-        viewport: viewport,
-      }).promise;
-
-      // 转为 base64
+      await page.render({ canvasContext: context!, viewport }).promise;
       const imageData = canvas.toDataURL('image/jpeg', 0.8).split(',')[1];
 
-      // 调用 OCR API
       const response = await fetch('/api/ocr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,10 +131,8 @@ export default function Home() {
     setStatusText('正在提取文本...');
 
     try {
-      // 1. 尝试提取 PDF 文本
       let text = await extractPDFText(file);
       
-      // 2. 如果文本为空或太少，使用 OCR
       if (!text.trim() || text.trim().length < 50) {
         setStatus('ocr');
         setStatusText('检测到扫描件，正在识别...');
@@ -167,14 +147,10 @@ export default function Home() {
       setStatusText('正在生成摘要...');
       setProgress(90);
 
-      // 3. 调用 API 生成摘要
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text,
-          filename: file.name,
-        }),
+        body: JSON.stringify({ text, filename: file.name }),
       });
 
       if (!response.ok) {
@@ -219,10 +195,7 @@ export default function Home() {
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: question.trim(),
-          summary,
-        }),
+        body: JSON.stringify({ question: question.trim(), summary }),
       });
 
       if (!response.ok) {
@@ -241,20 +214,22 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="max-w-4xl mx-auto px-4 py-4">
-          <h1 className="text-2xl font-bold text-gray-900">PDF Guru</h1>
-          <p className="text-sm text-gray-500">AI PDF 摘要工具 · 支持扫描件</p>
-        </div>
-      </header>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-white">
+      {/* Hero Section */}
+      <div className="max-w-6xl mx-auto px-4 py-16 text-center">
+        <h1 className="text-5xl font-bold text-gray-900 mb-4">
+          AI PDF 摘要工具
+        </h1>
+        <p className="text-xl text-gray-600 mb-12">
+          快速提取 PDF 关键信息，支持文字和扫描件
+        </p>
 
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        {/* 上传区域 */}
+        {/* Upload Area */}
         <div
-          className={`drop-zone rounded-lg p-12 text-center cursor-pointer ${
-            isDragOver ? 'drag-over' : ''
+          className={`relative border-2 border-dashed rounded-2xl p-16 transition-all cursor-pointer ${
+            isDragOver
+              ? 'border-blue-500 bg-blue-50'
+              : 'border-gray-300 bg-white hover:border-blue-400 hover:bg-gray-50'
           }`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
@@ -270,121 +245,158 @@ export default function Home() {
           />
           
           {file ? (
-            <div>
-              <div className="text-4xl mb-2">📄</div>
-              <p className="font-medium text-gray-900">{file.name}</p>
-              <p className="text-sm text-gray-500 mt-1">
-                {(file.size / 1024 / 1024).toFixed(2)} MB
-              </p>
+            <div className="space-y-4">
+              <div className="text-6xl">📄</div>
+              <div>
+                <p className="text-lg font-semibold text-gray-900">{file.name}</p>
+                <p className="text-sm text-gray-500 mt-1">
+                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                </p>
+              </div>
+              {status === 'idle' && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSubmit();
+                  }}
+                  className="mt-4 px-8 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors shadow-lg"
+                >
+                  生成摘要
+                </button>
+              )}
             </div>
           ) : (
-            <div>
-              <div className="text-4xl mb-2">📎</div>
-              <p className="font-medium text-gray-900">拖拽 PDF 到这里，或点击上传</p>
-              <p className="text-sm text-gray-500 mt-1">支持文字 PDF 和扫描件 · 最大 10MB</p>
+            <div className="space-y-4">
+              <div className="text-6xl">📎</div>
+              <div>
+                <p className="text-lg font-semibold text-gray-900">
+                  拖拽 PDF 到这里，或点击上传
+                </p>
+                <p className="text-sm text-gray-500 mt-2">
+                  支持文字 PDF 和扫描件 • 最大 10MB
+                </p>
+              </div>
             </div>
           )}
         </div>
 
-        {/* 上传按钮 */}
-        {file && status === 'idle' && (
-          <div className="mt-4 flex justify-center">
-            <button
-              onClick={handleSubmit}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
-            >
-              生成摘要
-            </button>
-          </div>
-        )}
-
-        {/* 状态显示 */}
-        {(status === 'extracting' || status === 'ocr') && (
-          <div className="mt-8">
-            <div className="text-center mb-4">
-              <div className="loading-spinner mx-auto mb-4"></div>
-              <p className="text-gray-600">{statusText}</p>
+        {/* Progress */}
+        {(status === 'extracting' || status === 'ocr' || status === 'processing') && (
+          <div className="mt-8 max-w-md mx-auto">
+            <div className="bg-white rounded-lg p-6 shadow-lg">
+              <div className="flex items-center justify-center mb-4">
+                <div className="loading-spinner mr-3"></div>
+                <span className="text-gray-700">{statusText}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                ></div>
+              </div>
+              <p className="text-sm text-gray-500 mt-2">{progress}%</p>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              ></div>
-            </div>
-            <p className="text-center text-sm text-gray-500 mt-2">{progress}%</p>
           </div>
         )}
 
-        {status === 'processing' && (
-          <div className="mt-8 text-center">
-            <div className="loading-spinner mx-auto mb-4"></div>
-            <p className="text-gray-600">{statusText || '正在生成摘要...'}</p>
-          </div>
-        )}
-
-        {/* 错误提示 */}
+        {/* Error */}
         {error && (
-          <div className="mt-8 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-600">{error}</p>
+          <div className="mt-8 max-w-md mx-auto bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-700">{error}</p>
           </div>
         )}
+      </div>
 
-        {/* 摘要结果 */}
-        {summary && status === 'success' && (
-          <div className="mt-8">
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-semibold text-gray-900">摘要结果</h2>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleCopy}
-                    className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                  >
-                    复制
-                  </button>
-                  <button
-                    onClick={handleDownload}
-                    className="px-4 py-2 text-sm bg-gray-100 text-gray-700 rounded hover:bg-gray-200 transition-colors"
-                  >
-                    下载
-                  </button>
-                </div>
+      {/* Summary Result */}
+      {summary && (
+        <div className="max-w-4xl mx-auto px-4 pb-16">
+          <div className="bg-white rounded-2xl shadow-xl p-8">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">摘要结果</h2>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCopy}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  📋 复制
+                </button>
+                <button
+                  onClick={handleDownload}
+                  className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                >
+                  ⬇️ 下载
+                </button>
               </div>
-              <div className="prose max-w-none">
-                <pre className="whitespace-pre-wrap text-gray-700 font-sans">
-                  {summary}
-                </pre>
+            </div>
+            
+            <div className="prose max-w-none">
+              <div className="whitespace-pre-wrap text-gray-700 leading-relaxed">
+                {summary}
               </div>
             </div>
 
-            {/* 追问功能 */}
-            <div className="mt-6 bg-white rounded-lg shadow-sm p-6">
-              <h3 className="text-md font-semibold text-gray-900 mb-4">继续提问</h3>
-              <div className="flex gap-2">
+            {/* Chat */}
+            <div className="mt-8 pt-8 border-t border-gray-200">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4">继续提问</h3>
+              <div className="flex gap-3">
                 <input
                   type="text"
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
-                  placeholder="对摘要有疑问？继续提问..."
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="对摘要有什么疑问？"
+                  className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  disabled={status !== 'success'}
                 />
                 <button
                   onClick={handleAskQuestion}
                   disabled={!question.trim() || status !== 'success'}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   发送
                 </button>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        <footer className="mt-16 text-center text-sm text-gray-400">
-          <p>不存储用户文件 • 保护隐私 • 支持中英文</p>
-        </footer>
+      {/* Features */}
+      <div className="max-w-6xl mx-auto px-4 py-16">
+        <h2 className="text-3xl font-bold text-center text-gray-900 mb-12">
+          为什么选择 PDF Guru？
+        </h2>
+        <div className="grid md:grid-cols-3 gap-8">
+          <div className="text-center p-6">
+            <div className="text-4xl mb-4">⚡</div>
+            <h3 className="text-xl font-semibold mb-2">快速准确</h3>
+            <p className="text-gray-600">
+              AI 驱动，秒级生成摘要，准确提取关键信息
+            </p>
+          </div>
+          <div className="text-center p-6">
+            <div className="text-4xl mb-4">🔒</div>
+            <h3 className="text-xl font-semibold mb-2">安全私密</h3>
+            <p className="text-gray-600">
+              不存储文件，纯内存处理，保护您的隐私
+            </p>
+          </div>
+          <div className="text-center p-6">
+            <div className="text-4xl mb-4">🌍</div>
+            <h3 className="text-xl font-semibold mb-2">中英文支持</h3>
+            <p className="text-gray-600">
+              支持中英文混合识别，扫描件也能轻松处理
+            </p>
+          </div>
+        </div>
       </div>
-    </main>
+
+      {/* Footer */}
+      <footer className="bg-gray-50 border-t border-gray-200 py-8">
+        <div className="max-w-6xl mx-auto px-4 text-center text-gray-600">
+          <p>© 2026 PDF Guru. 不存储用户文件 • 保护隐私</p>
+        </div>
+      </footer>
+    </div>
   );
 }
