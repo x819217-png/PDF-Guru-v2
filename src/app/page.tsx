@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { translations, Language } from '@/lib/i18n';
 
 type Status = 'idle' | 'extracting' | 'ocr' | 'processing' | 'success' | 'error';
 
@@ -10,6 +11,7 @@ interface Message {
 }
 
 export default function Home() {
+  const [language, setLanguage] = useState<Language>('zh');
   const [files, setFiles] = useState<File[]>([]);
   const [summary, setSummary] = useState<string>('');
   const [status, setStatus] = useState<Status>('idle');
@@ -23,6 +25,18 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [pdfLibLoaded, setPdfLibLoaded] = useState(false);
+
+  const t = translations[language];
+
+  // 检测浏览器语言
+  useEffect(() => {
+    const browserLang = navigator.language.toLowerCase();
+    if (browserLang.startsWith('zh')) {
+      setLanguage('zh');
+    } else {
+      setLanguage('en');
+    }
+  }, []);
 
   useEffect(() => {
     import('pdfjs-dist').then((pdfjs) => {
@@ -68,7 +82,7 @@ export default function Home() {
     const numPages = Math.min(pdf.numPages, 10);
 
     for (let i = 1; i <= numPages; i++) {
-      setStatusText(`正在识别第 ${i}/${numPages} 页...`);
+      setStatusText(`${language === 'zh' ? '正在识别第' : 'Recognizing page'} ${i}/${numPages} ${language === 'zh' ? '页...' : '...'}`);
       setProgress(50 + Math.round((i / numPages) * 40));
 
       const page = await pdf.getPage(i);
@@ -148,20 +162,20 @@ export default function Home() {
     setStatus('extracting');
     setError('');
     setProgress(0);
-    setStatusText('正在处理...');
+    setStatusText(t.statusProcessing);
 
     try {
       let allText = '';
 
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setStatusText(`正在处理 ${file.name} (${i + 1}/${files.length})...`);
+        setStatusText(`${language === 'zh' ? '正在处理' : 'Processing'} ${file.name} (${i + 1}/${files.length})...`);
 
         let text = await extractPDFText(file);
         
         if (!text.trim() || text.trim().length < 50) {
           setStatus('ocr');
-          setStatusText(`识别扫描件 ${file.name}...`);
+          setStatusText(`${language === 'zh' ? '识别扫描件' : 'OCR scanning'} ${file.name}...`);
           text = await ocrPDF(file);
         }
 
@@ -169,10 +183,11 @@ export default function Home() {
       }
 
       if (!allText.trim()) {
-        throw new Error('无法从 PDF 中提取文本');
+        throw new Error(t.errorNoText);
       }
 
       setStatus('processing');
+      setStatusText(t.statusProcessing);
       setStatusText('正在生成摘要...');
       setProgress(90);
 
@@ -258,21 +273,36 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  const presetQuestions = [
-    '总结核心要点',
-    '提取关键数据',
-    '列出主要结论',
-    '翻译成英文',
-  ];
-
   return (
     <main className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold" style={{ color: '#E13A55' }}>PDF Guru</h1>
-            <p className="text-sm text-gray-500">AI PDF 摘要工具</p>
+            <h1 className="text-2xl font-bold" style={{ color: '#E13A55' }}>{t.title}</h1>
+            <p className="text-sm text-gray-500">{t.subtitle}</p>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setLanguage('zh')}
+              className={`px-3 py-1 rounded ${
+                language === 'zh'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              中文
+            </button>
+            <button
+              onClick={() => setLanguage('en')}
+              className={`px-3 py-1 rounded ${
+                language === 'en'
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              English
+            </button>
           </div>
         </div>
       </header>
@@ -282,27 +312,27 @@ export default function Home() {
         <div className="bg-gradient-to-br from-purple-600 to-purple-800 text-white py-16">
           <div className="max-w-4xl mx-auto px-4 text-center">
             <h2 className="text-4xl md:text-5xl font-bold mb-4">
-              AI PDF 摘要工具
+              {t.heroTitle}
             </h2>
             <p className="text-xl md:text-2xl mb-8 text-purple-100">
-              支持文字 PDF 和扫描件，一键生成智能摘要
+              {t.heroSubtitle}
             </p>
             <div className="flex flex-wrap justify-center gap-4 text-sm">
               <div className="flex items-center space-x-2">
                 <span className="text-2xl">✅</span>
-                <span>批量处理</span>
+                <span>{t.featureBatch}</span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="text-2xl">💬</span>
-                <span>智能对话</span>
+                <span>{t.featureChat}</span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="text-2xl">🌍</span>
-                <span>中英文支持</span>
+                <span>{t.featureLanguage}</span>
               </div>
               <div className="flex items-center space-x-2">
                 <span className="text-2xl">📥</span>
-                <span>导出 Markdown</span>
+                <span>{t.featureExport}</span>
               </div>
             </div>
           </div>
@@ -331,10 +361,10 @@ export default function Home() {
           
           <div className="text-5xl mb-4">📎</div>
           <p className="text-lg font-medium text-gray-900 mb-2">
-            拖拽 PDF 到这里，或点击上传
+            {t.uploadTitle}
           </p>
           <p className="text-sm text-gray-500">
-            支持批量上传（最多 10 个文件，每个最大 10MB）
+            {t.uploadSubtitle}
           </p>
         </div>
 
@@ -359,7 +389,7 @@ export default function Home() {
                   onClick={() => removeFile(index)}
                   className="text-red-500 hover:text-red-700"
                 >
-                  ✕
+                  {t.removeFile}
                 </button>
               </div>
             ))}
@@ -373,7 +403,7 @@ export default function Home() {
               onClick={handleSubmit}
               className="btn-primary px-8 py-3 rounded-lg font-medium text-lg"
             >
-              生成摘要 ({files.length} 个文件)
+              {t.startProcessing} ({files.length} {language === 'zh' ? '个文件' : 'files'})
             </button>
           </div>
         )}
@@ -405,19 +435,22 @@ export default function Home() {
             {/* 摘要内容 */}
             <div className="bg-white rounded-xl border p-6">
               <div className="flex justify-between items-center mb-4">
-                <h2 className="text-xl font-bold text-gray-900">📝 摘要结果</h2>
+                <h2 className="text-xl font-bold text-gray-900">{t.summaryTitle}</h2>
                 <div className="flex space-x-2">
                   <button
-                    onClick={() => navigator.clipboard.writeText(summary)}
+                    onClick={() => {
+                      navigator.clipboard.writeText(summary);
+                      alert(t.copiedSuccess);
+                    }}
                     className="btn-secondary px-4 py-2 rounded-lg text-sm"
                   >
-                    📋 复制
+                    {t.copyButton}
                   </button>
                   <button
                     onClick={handleDownloadMarkdown}
                     className="btn-secondary px-4 py-2 rounded-lg text-sm"
                   >
-                    ⬇️ 下载 Markdown
+                    {t.downloadButton}
                   </button>
                 </div>
               </div>
@@ -430,20 +463,38 @@ export default function Home() {
 
             {/* Chat 区域 */}
             <div className="bg-white rounded-xl border p-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-4">💬 继续提问</h2>
+              <h2 className="text-xl font-bold text-gray-900 mb-4">{t.chatTitle}</h2>
               
               {/* 预设问题 */}
               <div className="flex flex-wrap gap-2 mb-4">
-                {presetQuestions.map((q, i) => (
-                  <button
-                    key={i}
-                    onClick={() => handleAskQuestion(q)}
-                    disabled={isAsking}
-                    className="btn-secondary px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
-                  >
-                    {q}
-                  </button>
-                ))}
+                <button
+                  onClick={() => handleAskQuestion(t.presetQuestion1)}
+                  disabled={isAsking}
+                  className="btn-secondary px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+                >
+                  {t.presetQuestion1}
+                </button>
+                <button
+                  onClick={() => handleAskQuestion(t.presetQuestion2)}
+                  disabled={isAsking}
+                  className="btn-secondary px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+                >
+                  {t.presetQuestion2}
+                </button>
+                <button
+                  onClick={() => handleAskQuestion(t.presetQuestion3)}
+                  disabled={isAsking}
+                  className="btn-secondary px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+                >
+                  {t.presetQuestion3}
+                </button>
+                <button
+                  onClick={() => handleAskQuestion(t.presetQuestion4)}
+                  disabled={isAsking}
+                  className="btn-secondary px-4 py-2 rounded-lg text-sm hover:bg-gray-50"
+                >
+                  {t.presetQuestion4}
+                </button>
               </div>
 
               {/* 对话历史 */}
@@ -459,7 +510,7 @@ export default function Home() {
                       }`}
                     >
                       <p className="font-medium text-sm text-gray-600 mb-1">
-                        {msg.role === 'user' ? '你' : 'AI'}
+                        {msg.role === 'user' ? (language === 'zh' ? '你' : 'You') : 'AI'}
                       </p>
                       <p className="text-gray-800 whitespace-pre-wrap">{msg.content}</p>
                     </div>
@@ -473,6 +524,19 @@ export default function Home() {
                 <input
                   type="text"
                   value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && !isAsking && handleAskQuestion()}
+                  placeholder={t.chatPlaceholder}
+                  disabled={isAsking}
+                  className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                <button
+                  onClick={() => handleAskQuestion()}
+                  disabled={isAsking || !question.trim()}
+                  className="btn-primary px-6 py-2 rounded-lg disabled:opacity-50"
+                >
+                  {isAsking ? (language === 'zh' ? '思考中...' : 'Thinking...') : t.askButton}
+                </button>
                   onChange={(e) => setQuestion(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
                   placeholder="输入你的问题..."
