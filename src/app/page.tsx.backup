@@ -271,43 +271,11 @@ export default function Home() {
       <header className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
           <div>
-            <h1 className="text-2xl font-bold" style={{ color: '#E13A55' }}>PDF Guru</h1>
-            <p className="text-sm text-gray-500">AI PDF 摘要工具</p>
+            <h1 className="text-2xl font-bold text-gray-900">PDF Guru</h1>
+            <p className="text-sm text-gray-500">AI PDF 摘要工具 - 支持批量处理</p>
           </div>
         </div>
       </header>
-
-      {/* Hero Section */}
-      {files.length === 0 && !summary && (
-        <div className="bg-gradient-to-br from-purple-600 to-purple-800 text-white py-16">
-          <div className="max-w-4xl mx-auto px-4 text-center">
-            <h2 className="text-4xl md:text-5xl font-bold mb-4">
-              AI PDF 摘要工具
-            </h2>
-            <p className="text-xl md:text-2xl mb-8 text-purple-100">
-              支持文字 PDF 和扫描件，一键生成智能摘要
-            </p>
-            <div className="flex flex-wrap justify-center gap-4 text-sm">
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">✅</span>
-                <span>批量处理</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">💬</span>
-                <span>智能对话</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">🌍</span>
-                <span>中英文支持</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">📥</span>
-                <span>导出 Markdown</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="max-w-7xl mx-auto px-4 py-8">
         {/* 上传区域 */}
