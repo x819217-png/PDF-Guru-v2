@@ -118,3 +118,8 @@ body {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* 隐藏 Cloudflare 注入的错误信息 */
+pre, xmp, plaintext {
+  display: none !important;
+}
