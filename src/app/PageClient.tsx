@@ -817,15 +817,46 @@ export default function Home() {
 
         {/* 进度显示 */}
         {(status === 'extracting' || status === 'ocr' || status === 'processing') && (
-          <div className="mt-8 bg-white p-6 rounded-xl border">
-            <div className="flex items-center justify-center mb-4">
-              <div className="loading-spinner"></div>
+          <div className="mt-8 bg-white p-8 rounded-xl border">
+            <div className="flex flex-col items-center justify-center mb-6">
+              <div className="loading-spinner mb-4"></div>
+              <p className="text-lg font-medium text-gray-800 mb-2">{statusText}</p>
             </div>
-            <p className="text-center text-gray-700 mb-2">{statusText}</p>
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${progress}%` }}></div>
+            
+            {/* 可视化进度条 */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-sm text-gray-600">
+                <span className={`flex items-center ${status === 'extracting' || status === 'ocr' || status === 'processing' ? 'text-purple-600 font-medium' : ''}`}>
+                  📄 {language === 'zh' ? '提取文本' : 'Extract Text'}
+                </span>
+                <span>{progress < 50 ? '✅' : ''}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="bg-purple-600 h-2 rounded-full transition-all duration-500" style={{ width: status === 'extracting' ? '50%' : (progress >= 50 ? '50%' : '0%') }}></div>
+              </div>
+              
+              <div className="flex items-center justify-between text-sm text-gray-600 mt-4">
+                <span className={`flex items-center ${status === 'ocr' ? 'text-purple-600 font-medium' : ''}`}>
+                  🔍 {language === 'zh' ? 'OCR识别' : 'OCR Recognition'}
+                </span>
+                <span>{progress >= 50 && progress < 90 ? '✅' : ''}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="bg-blue-600 h-2 rounded-full transition-all duration-500" style={{ width: progress >= 50 && progress < 90 ? '40%' : (progress >= 90 ? '40%' : '0%') }}></div>
+              </div>
+              
+              <div className="flex items-center justify-between text-sm text-gray-600 mt-4">
+                <span className={`flex items-center ${status === 'processing' ? 'text-purple-600 font-medium' : ''}`}>
+                  🤖 {language === 'zh' ? 'AI 生成摘要' : 'AI Summary'}
+                </span>
+                <span>{progress === 100 ? '✅' : ''}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="bg-green-600 h-2 rounded-full transition-all duration-500" style={{ width: progress === 100 ? '10%' : '0%' }}></div>
+              </div>
             </div>
-            <p className="text-center text-sm text-gray-500 mt-2">{progress}%</p>
+            
+            <p className="text-center text-2xl font-bold text-purple-600 mt-6">{progress}%</p>
           </div>
         )}
 
@@ -943,8 +974,8 @@ export default function Home() {
                 <pre 
                   className="whitespace-pre-wrap text-gray-700 font-sans"
                   dangerouslySetInnerHTML={{
-                    __html: summary.replace(/\[P(\d+)\]/g, 
-                      '<span class="text-purple-600 cursor-pointer hover:underline mx-1" onclick="window.scrollToPage && window.scrollToPage($1)">[P$1]</span>')
+                    __html: summary ? summary.replace(/\[P(\d+)\]/g, 
+                      '<span class="text-purple-600 cursor-pointer hover:underline mx-1" onclick="window.scrollToPage && window.scrollToPage($1)">[P$1]</span>') : ''
                   }}
                 ></pre>
               </div>
