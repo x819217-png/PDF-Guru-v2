@@ -537,19 +537,6 @@ export default function Home() {
                 >
                   {isAsking ? (language === 'zh' ? '思考中...' : 'Thinking...') : t.askButton}
                 </button>
-                  onChange={(e) => setQuestion(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleAskQuestion()}
-                  placeholder="输入你的问题..."
-                  disabled={isAsking}
-                  className="flex-1 px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                />
-                <button
-                  onClick={() => handleAskQuestion()}
-                  disabled={!question.trim() || isAsking}
-                  className="btn-primary px-6 py-3 rounded-lg disabled:opacity-50"
-                >
-                  {isAsking ? '...' : '发送'}
-                </button>
               </div>
             </div>
           </div>

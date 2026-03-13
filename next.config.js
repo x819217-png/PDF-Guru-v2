@@ -1,11 +1,6 @@
 // @ts-check
 
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  // 支持 Cloudflare Pages
-  experimental: {
-    runtime: 'edge',
-  },
-};
+const nextConfig = {};
 
 module.exports = nextConfig;
