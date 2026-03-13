@@ -29,8 +29,10 @@ export default function Home() {
   const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
+  const [pdfDoc, setPdfDoc] = useState<any>(null);
   const [usedToday, setUsedToday] = useState(0);
   const MAX_FREE_PER_DAY = 3;
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -162,6 +164,58 @@ export default function Home() {
 
     return fullText;
   };
+
+  // 加载 PDF 到侧边栏预览
+  const loadPdfToSidebar = async (file: File) => {
+    try {
+      const pdfjsLib = (window as any).pdfjsLib;
+      if (!pdfjsLib) return;
+      
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      setPdfDoc(pdf);
+      setTotalPages(pdf.numPages);
+      setPdfFile(file);
+      setCurrentPage(1);
+    } catch (err) {
+      console.error('Load PDF error:', err);
+    }
+  };
+
+  // 渲染指定页面到 canvas
+  const renderPage = async (pageNum: number, canvas: HTMLCanvasElement) => {
+    if (!pdfDoc) return;
+    const page = await pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: 1.5 });
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+    const context = canvas.getContext('2d');
+    if (context) {
+      await page.render({ canvasContext: context, viewport }).promise;
+    }
+  };
+
+  // 跳转到指定页面
+  const goToPage = (pageNum: number) => {
+    if (pageNum >= 1 && pageNum <= totalPages) {
+      setCurrentPage(pageNum);
+    }
+  };
+
+  // 全局函数供 onclick 调用
+  useEffect(() => {
+    (window as any).scrollToPage = goToPage;
+  }, [totalPages]);
+
+  // 渲染 PDF 页面
+  useEffect(() => {
+    if (!pdfDoc || !showSidebar) return;
+    
+    const canvas = document.getElementById('pdf-canvas') as HTMLCanvasElement;
+    if (canvas) {
+      renderPage(currentPage, canvas);
+    }
+  }, [pdfDoc, currentPage, showSidebar]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -300,6 +354,10 @@ export default function Home() {
       setStatus('success');
       setStatusText('');
       setPdfUrl('');
+      // 加载第一个文件到侧边栏预览
+      if (files.length > 0) {
+        loadPdfToSidebar(files[0]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '处理失败');
       setStatus('error');
@@ -374,6 +432,10 @@ export default function Home() {
       useQuota(); // 消耗一次免费额度
       setStatus('success');
       setStatusText('');
+      // 加载第一个文件到侧边栏预览
+      if (files.length > 0) {
+        loadPdfToSidebar(files[0]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '处理失败');
       setStatus('error');
@@ -565,7 +627,7 @@ export default function Home() {
 
       <div className={`max-w-7xl mx-auto px-4 py-8 ${showSidebar ? 'flex gap-6' : ''}`}>
         {/* 侧边栏 - PDF 预览 */}
-        {showSidebar && files.length > 0 && (
+        {showSidebar && pdfDoc && (
           <div className="w-1/2 bg-white rounded-xl border p-4 fixed right-4 top-20 bottom-4 overflow-hidden flex flex-col z-40">
             <div className="flex justify-between items-center mb-2">
               <h3 className="font-bold">📄 PDF 预览</h3>
@@ -576,24 +638,25 @@ export default function Home() {
                 ✕
               </button>
             </div>
-            <div className="flex-1 overflow-auto bg-gray-100 rounded" ref={pdfViewerRef}>
-              <div className="text-center text-gray-500 py-8">
-                PDF 预览区域 - 点击摘要中的 [P页码] 跳转
-              </div>
+            <div className="flex-1 overflow-auto bg-gray-100 rounded flex justify-center p-4" ref={pdfViewerRef}>
+              <canvas 
+                id="pdf-canvas"
+                className="shadow-lg"
+              />
             </div>
             <div className="flex justify-center items-center gap-2 mt-2">
               <button
-                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                onClick={() => goToPage(currentPage - 1)}
                 disabled={currentPage <= 1}
                 className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
               >
                 ◀
               </button>
               <span className="text-sm">
-                {currentPage} / {totalPages || '-'}
+                {currentPage} / {totalPages}
               </span>
               <button
-                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                onClick={() => goToPage(currentPage + 1)}
                 disabled={currentPage >= totalPages}
                 className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
               >
@@ -830,7 +893,7 @@ export default function Home() {
                     </div>
                   </div>
                   {/* 侧边栏对照模式按钮 */}
-                  {files.length > 0 && (
+                  {pdfDoc && (
                     <button
                       onClick={() => setShowSidebar(!showSidebar)}
                       className={`px-4 py-2 rounded-lg text-sm ${
