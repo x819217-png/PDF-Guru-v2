@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { translations, Language } from '@/lib/i18n';
+import MindMap from '@/components/MindMap';
 
 type Status = 'idle' | 'extracting' | 'ocr' | 'processing' | 'success' | 'error';
 
@@ -16,6 +17,8 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string>('');
   const [summary, setSummary] = useState<string>('');
   const [keywords, setKeywords] = useState<string[]>([]);
+  const [mindmap, setMindmap] = useState<any>(null);
+  const [showMindmap, setShowMindmap] = useState(false);
   const [template, setTemplate] = useState<'default' | 'academic' | 'business' | 'simple'>('default');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string>('');
@@ -349,6 +352,7 @@ export default function Home() {
       const result = await response.json();
       setSummary(result.summary);
       setKeywords(result.keywords || []);
+      setMindmap(result.mindmap || null);
       setProgress(100);
       useQuota(); // 消耗一次免费额度
       setStatus('success');
@@ -428,6 +432,7 @@ export default function Home() {
       const data = await response.json();
       setSummary(data.summary);
       setKeywords(data.keywords || []);
+      setMindmap(data.mindmap || null);
       setProgress(100);
       useQuota(); // 消耗一次免费额度
       setStatus('success');
@@ -834,6 +839,32 @@ export default function Home() {
         {/* 摘要结果 */}
         {status === 'success' && summary && (
           <div className="mt-8 space-y-6 fade-in">
+            {/* 思维导图切换按钮 */}
+            {mindmap && (
+              <div className="flex justify-center">
+                <button
+                  onClick={() => setShowMindmap(!showMindmap)}
+                  className={`px-6 py-2 rounded-lg ${
+                    showMindmap
+                      ? 'bg-purple-600 text-white'
+                      : 'bg-purple-100 text-purple-700 hover:bg-purple-200'
+                  }`}
+                >
+                  🧠 {showMindmap ? (language === 'zh' ? '关闭思维导图' : 'Close Mind Map') : (language === 'zh' ? '查看思维导图' : 'View Mind Map')}
+                </button>
+              </div>
+            )}
+
+            {/* 思维导图展示 */}
+            {showMindmap && mindmap && (
+              <div className="bg-white rounded-xl border p-6 overflow-auto">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">
+                  🧠 {language === 'zh' ? '思维导图' : 'Mind Map'}
+                </h3>
+                <MindMap data={mindmap} language={language} />
+              </div>
+            )}
+
             {/* 关键词 */}
             {keywords.length > 0 && (
               <div className="bg-white rounded-xl border p-4">

@@ -186,9 +186,33 @@ export async function POST(request: NextRequest) {
       keywords = keywordResult.split(/[,，、]/).map((k: string) => k.trim()).filter((k: string) => k);
     }
 
+    // 生成思维导图结构
+    let mindmap = null;
+    const mindmapMessages = [
+      {
+        role: 'system',
+        content: '你是一个思维导图生成助手。请根据文档内容生成一个思维导图结构。要求：1）返回一个严格的 JSON 对象；2）根节点是文档主题；3）子节点是主要章节或要点；4）叶节点是详细内容。格式：{"name":"根主题","children":[{"name":"分支1","children":[{"name":"详情1"},{"name":"详情2"}]}]}。只返回 JSON，不要其他内容。',
+      },
+      {
+        role: 'user',
+        content: `文档内容：\n${truncatedText.slice(0, 8000)}`,
+      },
+    ];
+    
+    try {
+      const mindmapResult = await callAI(selectedModel, mindmapMessages);
+      const jsonMatch = mindmapResult.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        mindmap = JSON.parse(jsonMatch[0]);
+      }
+    } catch (e) {
+      console.error('Mindmap parse error:', e);
+    }
+
     return NextResponse.json({ 
       summary: aiSummary,
-      keywords: keywords.length > 0 ? keywords : undefined
+      keywords: keywords.length > 0 ? keywords : undefined,
+      mindmap: mindmap,
     });
 
   } catch (error) {
