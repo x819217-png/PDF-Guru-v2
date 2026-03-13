@@ -973,15 +973,14 @@ export default function Home() {
                   )}
                 </div>
               </div>
-              {/* 引用标注 - 将 [P3] 转为可点击链接 */}
-              <div className="prose max-w-none">
-                <pre 
-                  className="whitespace-pre-wrap text-gray-700 font-sans"
-                  dangerouslySetInnerHTML={{
-                    __html: summary ? summary.replace(/\[P(\d+)\]/g, 
-                      '<span class="text-purple-600 cursor-pointer hover:underline mx-1" onclick="window.scrollToPage && window.scrollToPage($1)">[P$1]</span>') : ''
-                  }}
-                ></pre>
+              {/* 摘要内容 */}
+              <div className="bg-gray-50 rounded-lg p-4 mt-4">
+                <div 
+                  className="text-gray-700 whitespace-pre-wrap"
+                  style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                >
+                  {summary}
+                </div>
               </div>
             </div>
 
