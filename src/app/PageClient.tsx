@@ -13,6 +13,7 @@ interface Message {
 export default function Home() {
   const [language, setLanguage] = useState<Language>('zh');
   const [files, setFiles] = useState<File[]>([]);
+  const [pdfUrl, setPdfUrl] = useState<string>('');
   const [summary, setSummary] = useState<string>('');
   const [keywords, setKeywords] = useState<string[]>([]);
   const [template, setTemplate] = useState<'default' | 'academic' | 'business' | 'simple'>('default');
@@ -158,6 +159,89 @@ export default function Home() {
     setFiles(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handleUrlSubmit = async () => {
+    if (!pdfUrl.trim()) return;
+
+    setStatus('extracting');
+    setError('');
+    setProgress(0);
+    setStatusText(language === 'zh' ? '正在下载 PDF...' : 'Downloading PDF...');
+
+    try {
+      // 下载 PDF
+      const downloadResponse = await fetch('/api/download-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: pdfUrl }),
+      });
+
+      if (!downloadResponse.ok) {
+        const err = await downloadResponse.json();
+        throw new Error(err.error || '下载失败');
+      }
+
+      const { data, filename } = await downloadResponse.json();
+      
+      // 将 base64 转为 File 对象
+      const binaryString = atob(data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'application/pdf' });
+      const file = new File([blob], filename, { type: 'application/pdf' });
+
+      // 处理 PDF
+      setFiles([file]);
+      setProgress(20);
+      
+      setStatusText(language === 'zh' ? '正在提取文本...' : 'Extracting text...');
+      let text = await extractPDFText(file);
+      
+      if (!text.trim() || text.trim().length < 50) {
+        setStatus('ocr');
+        setStatusText(language === 'zh' ? '识别扫描件...' : 'OCR scanning...');
+        text = await ocrPDF(file);
+      }
+
+      if (!text.trim()) {
+        throw new Error(t.errorNoText);
+      }
+
+      setStatus('processing');
+      setStatusText(t.statusProcessing);
+      setProgress(90);
+
+      const response = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text,
+          filename,
+          template,
+          extractKeywords: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || '处理失败');
+      }
+
+      const result = await response.json();
+      setSummary(result.summary);
+      setKeywords(result.keywords || []);
+      setProgress(100);
+      setStatus('success');
+      setStatusText('');
+      setPdfUrl('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '处理失败');
+      setStatus('error');
+      setStatusText('');
+    }
+  };
+
   const handleSubmit = async () => {
     if (files.length === 0) return;
 
@@ -259,21 +343,69 @@ export default function Home() {
     }
   };
 
-  const handleDownloadMarkdown = () => {
-    let markdown = `# PDF 摘要\n\n${summary}\n\n`;
-    
-    if (messages.length > 0) {
-      markdown += `## 问答记录\n\n`;
-      messages.forEach(msg => {
-        markdown += `**${msg.role === 'user' ? '问' : '答'}**: ${msg.content}\n\n`;
-      });
+  const handleDownload = (format: 'markdown' | 'word' | 'notion') => {
+    let content = '';
+    let filename = '';
+    let mimeType = '';
+
+    if (format === 'markdown') {
+      content = `# PDF 摘要\n\n`;
+      if (keywords.length > 0) {
+        content += `**关键词**: ${keywords.join(', ')}\n\n`;
+      }
+      content += `${summary}\n\n`;
+      
+      if (messages.length > 0) {
+        content += `## 问答记录\n\n`;
+        messages.forEach(msg => {
+          content += `**${msg.role === 'user' ? '问' : '答'}**: ${msg.content}\n\n`;
+        });
+      }
+      filename = 'summary.md';
+      mimeType = 'text/markdown';
+    } else if (format === 'word') {
+      // 简单的 HTML 格式，Word 可以打开
+      content = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>PDF Summary</title>
+</head>
+<body>
+  <h1>PDF 摘要</h1>
+  ${keywords.length > 0 ? `<p><strong>关键词:</strong> ${keywords.join(', ')}</p>` : ''}
+  <pre style="white-space: pre-wrap; font-family: Arial;">${summary}</pre>
+  ${messages.length > 0 ? `
+    <h2>问答记录</h2>
+    ${messages.map(msg => `<p><strong>${msg.role === 'user' ? '问' : '答'}:</strong> ${msg.content}</p>`).join('')}
+  ` : ''}
+</body>
+</html>`;
+      filename = 'summary.doc';
+      mimeType = 'application/msword';
+    } else if (format === 'notion') {
+      // Notion 兼容的 Markdown
+      content = `# PDF 摘要\n\n`;
+      if (keywords.length > 0) {
+        content += `> **关键词**: ${keywords.join(', ')}\n\n`;
+      }
+      content += `${summary}\n\n`;
+      
+      if (messages.length > 0) {
+        content += `---\n\n## 💬 问答记录\n\n`;
+        messages.forEach(msg => {
+          content += `### ${msg.role === 'user' ? '❓ 问' : '💡 答'}\n\n${msg.content}\n\n`;
+        });
+      }
+      filename = 'summary-notion.md';
+      mimeType = 'text/markdown';
     }
 
-    const blob = new Blob([markdown], { type: 'text/markdown' });
+    const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'summary.md';
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -371,6 +503,30 @@ export default function Home() {
           <p className="text-sm text-gray-500">
             {t.uploadSubtitle}
           </p>
+        </div>
+
+        {/* URL 输入 */}
+        <div className="mt-4 text-center">
+          <p className="text-sm text-gray-500 mb-2">
+            {language === 'zh' ? '或者输入 PDF 链接' : 'Or enter PDF URL'}
+          </p>
+          <div className="flex max-w-2xl mx-auto gap-2">
+            <input
+              type="url"
+              value={pdfUrl}
+              onChange={(e) => setPdfUrl(e.target.value)}
+              placeholder={language === 'zh' ? 'https://example.com/document.pdf' : 'https://example.com/document.pdf'}
+              className="flex-1 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+              disabled={status !== 'idle'}
+            />
+            <button
+              onClick={handleUrlSubmit}
+              disabled={!pdfUrl.trim() || status !== 'idle'}
+              className="btn-primary px-6 py-2 rounded-lg disabled:opacity-50"
+            >
+              {language === 'zh' ? '处理' : 'Process'}
+            </button>
+          </div>
         </div>
 
         {/* 文件列表 */}
@@ -519,14 +675,33 @@ export default function Home() {
                     }}
                     className="btn-secondary px-4 py-2 rounded-lg text-sm"
                   >
-                    {t.copyButton}
+                    📋 {language === 'zh' ? '复制' : 'Copy'}
                   </button>
-                  <button
-                    onClick={handleDownloadMarkdown}
-                    className="btn-secondary px-4 py-2 rounded-lg text-sm"
-                  >
-                    {t.downloadButton}
-                  </button>
+                  <div className="relative group">
+                    <button className="btn-secondary px-4 py-2 rounded-lg text-sm">
+                      ⬇️ {language === 'zh' ? '导出' : 'Export'} ▾
+                    </button>
+                    <div className="absolute right-0 mt-2 w-48 bg-white border rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                      <button
+                        onClick={() => handleDownload('markdown')}
+                        className="block w-full text-left px-4 py-2 hover:bg-gray-100 rounded-t-lg"
+                      >
+                        📝 Markdown
+                      </button>
+                      <button
+                        onClick={() => handleDownload('word')}
+                        className="block w-full text-left px-4 py-2 hover:bg-gray-100"
+                      >
+                        📄 Word (.doc)
+                      </button>
+                      <button
+                        onClick={() => handleDownload('notion')}
+                        className="block w-full text-left px-4 py-2 hover:bg-gray-100 rounded-b-lg"
+                      >
+                        📓 Notion
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="prose max-w-none">
