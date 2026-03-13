@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-export const dynamic = 'force-dynamic';
+export const runtime = 'edge';
 
 export const metadata: Metadata = {
   title: "PDF Guru - AI PDF 摘要工具",
