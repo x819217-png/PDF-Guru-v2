@@ -176,28 +176,38 @@ export default function Home() {
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    const droppedFiles = Array.from(e.dataTransfer.files).filter(
-      f => f.type === 'application/pdf'
-    );
-    if (droppedFiles.length > 0) {
-      setFiles(prev => [...prev, ...droppedFiles].slice(0, 10));
-      setSummary('');
-      setError('');
-      setMessages([]);
-    } else {
-      setError('请上传 PDF 文件');
+    try {
+      const droppedFiles = Array.from(e.dataTransfer.files).filter(
+        f => f.type === 'application/pdf'
+      );
+      if (droppedFiles.length > 0) {
+        setFiles(prev => [...prev, ...droppedFiles].slice(0, 10));
+        setSummary('');
+        setError('');
+        setMessages([]);
+      } else {
+        setError(language === 'zh' ? '请上传 PDF 文件' : 'Please upload PDF files');
+      }
+    } catch (err) {
+      console.error('Drop error:', err);
+      setError(language === 'zh' ? '拖放文件失败' : 'Failed to drop files');
     }
-  }, []);
+  }, [language]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []).filter(
-      f => f.type === 'application/pdf'
-    );
-    if (selectedFiles.length > 0) {
-      setFiles(prev => [...prev, ...selectedFiles].slice(0, 10));
-      setSummary('');
-      setError('');
-      setMessages([]);
+    try {
+      const selectedFiles = Array.from(e.target.files || []).filter(
+        f => f.type === 'application/pdf'
+      );
+      if (selectedFiles.length > 0) {
+        setFiles(prev => [...prev, ...selectedFiles].slice(0, 10));
+        setSummary('');
+        setError('');
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error('File select error:', err);
+      setError(language === 'zh' ? '选择文件失败，请重试' : 'Failed to select files, please try again');
     }
   }, []);
 
