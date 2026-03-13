@@ -25,11 +25,48 @@ export default function Home() {
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState('');
   const [isAsking, setIsAsking] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [usedToday, setUsedToday] = useState(0);
+  const MAX_FREE_PER_DAY = 3;
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const pdfViewerRef = useRef<HTMLDivElement>(null);
   const [pdfLibLoaded, setPdfLibLoaded] = useState(false);
 
   const t = translations[language];
+
+  // 免费额度检查
+  const checkQuota = useCallback(() => {
+    const today = new Date().toDateString();
+    const stored = localStorage.getItem('sumify_pdf_quota');
+    if (stored) {
+      const data = JSON.parse(stored);
+      if (data.date === today) {
+        setUsedToday(data.count);
+        return data.count < MAX_FREE_PER_DAY;
+      }
+    }
+    return true; // 新的一天
+  }, []);
+
+  const useQuota = useCallback(() => {
+    const today = new Date().toDateString();
+    const stored = localStorage.getItem('sumify_pdf_quota');
+    let count = 0;
+    if (stored) {
+      const data = JSON.parse(stored);
+      if (data.date === today) {
+        count = data.count;
+      }
+    }
+    const newCount = count + 1;
+    localStorage.setItem('sumify_pdf_quota', JSON.stringify({ date: today, count: newCount }));
+    setUsedToday(newCount);
+  }, []);
 
   // 检测浏览器语言
   useEffect(() => {
@@ -38,6 +75,15 @@ export default function Home() {
       setLanguage('zh');
     } else {
       setLanguage('en');
+    }
+    // 加载已用额度
+    const stored = localStorage.getItem('sumify_pdf_quota');
+    if (stored) {
+      const data = JSON.parse(stored);
+      const today = new Date().toDateString();
+      if (data.date === today) {
+        setUsedToday(data.count);
+      }
     }
   }, []);
 
@@ -162,6 +208,14 @@ export default function Home() {
   const handleUrlSubmit = async () => {
     if (!pdfUrl.trim()) return;
 
+    // 检查免费额度
+    if (!checkQuota()) {
+      setError(language === 'zh' 
+        ? `今日免费次数已用完（${MAX_FREE_PER_DAY}次/天）。请明天再来或订阅无限次数。`
+        : `Daily free quota exhausted (${MAX_FREE_PER_DAY} times/day). Please come back tomorrow or subscribe.`);
+      return;
+    }
+
     setStatus('extracting');
     setError('');
     setProgress(0);
@@ -232,6 +286,7 @@ export default function Home() {
       setSummary(result.summary);
       setKeywords(result.keywords || []);
       setProgress(100);
+      useQuota(); // 消耗一次免费额度
       setStatus('success');
       setStatusText('');
       setPdfUrl('');
@@ -244,6 +299,14 @@ export default function Home() {
 
   const handleSubmit = async () => {
     if (files.length === 0) return;
+    
+    // 检查免费额度
+    if (!checkQuota()) {
+      setError(language === 'zh' 
+        ? `今日免费次数已用完（${MAX_FREE_PER_DAY}次/天）。请明天再来或订阅无限次数。`
+        : `Daily free quota exhausted (${MAX_FREE_PER_DAY} times/day). Please come back tomorrow or subscribe.`);
+      return;
+    }
 
     setStatus('extracting');
     setError('');
@@ -298,6 +361,7 @@ export default function Home() {
       setSummary(data.summary);
       setKeywords(data.keywords || []);
       setProgress(100);
+      useQuota(); // 消耗一次免费额度
       setStatus('success');
       setStatusText('');
     } catch (err) {
@@ -419,7 +483,20 @@ export default function Home() {
             <h1 className="text-2xl font-bold" style={{ color: '#7C3AED' }}>{t.title}</h1>
             <p className="text-sm text-gray-500">{t.subtitle}</p>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-4">
+            {/* 免费额度显示 */}
+            <div className="text-sm text-gray-600">
+              {language === 'zh' ? (
+                <span>
+                  📊 今日免费: <span className="font-bold">{usedToday}/{MAX_FREE_PER_DAY}</span>
+                </span>
+              ) : (
+                <span>
+                  📊 Free Today: <span className="font-bold">{usedToday}/{MAX_FREE_PER_DAY}</span>
+                </span>
+              )}
+            </div>
+            
             <button
               onClick={() => setLanguage('zh')}
               className={`px-3 py-1 rounded ${
@@ -476,7 +553,47 @@ export default function Home() {
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-4 py-8">
+      <div className={`max-w-7xl mx-auto px-4 py-8 ${showSidebar ? 'flex gap-6' : ''}`}>
+        {/* 侧边栏 - PDF 预览 */}
+        {showSidebar && files.length > 0 && (
+          <div className="w-1/2 bg-white rounded-xl border p-4 fixed right-4 top-20 bottom-4 overflow-hidden flex flex-col z-40">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="font-bold">📄 PDF 预览</h3>
+              <button
+                onClick={() => setShowSidebar(false)}
+                className="text-gray-500 hover:text-gray-700"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto bg-gray-100 rounded" ref={pdfViewerRef}>
+              <div className="text-center text-gray-500 py-8">
+                PDF 预览区域 - 点击摘要中的 [P页码] 跳转
+              </div>
+            </div>
+            <div className="flex justify-center items-center gap-2 mt-2">
+              <button
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage <= 1}
+                className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+              >
+                ◀
+              </button>
+              <span className="text-sm">
+                {currentPage} / {totalPages || '-'}
+              </span>
+              <button
+                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage >= totalPages}
+                className="px-3 py-1 bg-gray-200 rounded disabled:opacity-50"
+              >
+                ▶
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className={showSidebar ? 'w-1/2' : 'w-full'}>
         {/* 上传区域 */}
         <div
           className={`drop-zone rounded-xl p-8 text-center cursor-pointer transition-all ${
@@ -702,12 +819,30 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
+                  {/* 侧边栏对照模式按钮 */}
+                  {files.length > 0 && (
+                    <button
+                      onClick={() => setShowSidebar(!showSidebar)}
+                      className={`px-4 py-2 rounded-lg text-sm ${
+                        showSidebar
+                          ? 'bg-purple-600 text-white'
+                          : 'btn-secondary'
+                      }`}
+                    >
+                      📑 {showSidebar ? (language === 'zh' ? '关闭对照' : 'Close') : (language === 'zh' ? '对照模式' : 'Compare')}
+                    </button>
+                  )}
                 </div>
               </div>
+              {/* 引用标注 - 将 [P3] 转为可点击链接 */}
               <div className="prose max-w-none">
-                <pre className="whitespace-pre-wrap text-gray-700 font-sans">
-                  {summary}
-                </pre>
+                <pre 
+                  className="whitespace-pre-wrap text-gray-700 font-sans"
+                  dangerouslySetInnerHTML={{
+                    __html: summary.replace(/\[P(\d+)\]/g, 
+                      '<span class="text-purple-600 cursor-pointer hover:underline mx-1" onclick="window.scrollToPage && window.scrollToPage($1)">[P$1]</span>')
+                  }}
+                ></pre>
               </div>
             </div>
 
@@ -791,6 +926,7 @@ export default function Home() {
             </div>
           </div>
         )}
+        </div>
       </div>
     </main>
   );
