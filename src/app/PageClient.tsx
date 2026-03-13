@@ -242,6 +242,8 @@ export default function Home() {
         setSummary('');
         setError('');
         setMessages([]);
+        setStatus('idle');
+        setStatusText('');
       } else {
         setError(language === 'zh' ? '请上传 PDF 文件' : 'Please upload PDF files');
       }
@@ -261,6 +263,8 @@ export default function Home() {
         setSummary('');
         setError('');
         setMessages([]);
+        setStatus('idle');
+        setStatusText('');
       }
     } catch (err) {
       console.error('File select error:', err);
