@@ -265,6 +265,23 @@ export default function Home() {
     }
   }, []);
 
+  // 快速检测 PDF 是否需要 OCR（只提取前 2 页判断）
+  const quickCheckNeedsOCR = async (file: File): Promise<boolean> => {
+    const pdfjsLib = (window as any).pdfjsLib;
+    if (!pdfjsLib) return false;
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const checkPages = Math.min(pdf.numPages, 2);
+    let textLength = 0;
+    for (let i = 1; i <= checkPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(' ');
+      textLength += pageText.trim().length;
+    }
+    return textLength < 200; // 前 2 页少于 200 字符说明是扫描件
+  };
+
   const processFiles = async (filesToProcess: File[], filename: string) => {
     // 检查 guest 配额
     if (!checkGuestQuota()) {
@@ -279,11 +296,15 @@ export default function Home() {
       let allText = '';
       for (let i = 0; i < filesToProcess.length; i++) {
         const file = filesToProcess[i];
-        let text = await extractPDFText(file);
-        if (!text.trim() || text.trim().length < 50) {
+        // 快速判断是否需要 OCR
+        const needsOCR = await quickCheckNeedsOCR(file);
+        let text = '';
+        if (needsOCR) {
           setStatus('ocr');
-          setStatusText(language === 'zh' ? '识别扫描件...' : 'OCR scanning...');
+          setStatusText(language === 'zh' ? '检测到扫描件，正在 OCR 识别...' : 'Scanned doc detected, OCR...');
           text = await ocrPDF(file);
+        } else {
+          text = await extractPDFText(file);
         }
         allText += `\n\n=== ${file.name} ===\n\n${text}`;
       }
