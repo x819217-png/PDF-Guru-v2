@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { SessionProvider } from "@/components/SessionProvider";
+import { ClientProviders } from "@/components/ClientProviders";
 
 export const runtime = 'edge';
 
@@ -17,9 +17,9 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className="antialiased">
-        <SessionProvider>
+        <ClientProviders>
           {children}
-        </SessionProvider>
+        </ClientProviders>
       </body>
     </html>
   );
