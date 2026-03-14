@@ -1,11 +1,11 @@
-import { NextAuthOptions } from "next-auth";
+import NextAuth from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 
-export const authOptions: NextAuthOptions = {
+export const authOptions: any = {
   providers: [
     GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+      clientId: process.env.GOOGLE_CLIENT_ID || "",
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
     }),
   ],
   pages: {
@@ -13,15 +13,19 @@ export const authOptions: NextAuthOptions = {
   },
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30天
+    maxAge: 30 * 24 * 60 * 60,
   },
   callbacks: {
-    async session({ session, token }) {
+    async session({ session, token }: any) {
       if (session.user) {
-        session.user.id = token.sub!;
+        session.user.id = token.sub;
       }
       return session;
     },
   },
   secret: process.env.NEXTAUTH_SECRET,
 };
+
+const handler = NextAuth(authOptions);
+
+export { handler as GET, handler as POST };

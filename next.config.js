@@ -1,6 +1,8 @@
-// @ts-check
-
 /** @type {import('next').NextConfig} */
-const nextConfig = {};
+const nextConfig = {
+  experimental: {
+    serverComponentsExternalPackages: ['next-auth'],
+  },
+};
 
 module.exports = nextConfig;
