@@ -43,6 +43,8 @@ export default function Home() {
   const [statusText, setStatusText] = useState('');
   const [isAsking, setIsAsking] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(420);
+  const [pdfScale, setPdfScale] = useState(1.5);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
@@ -51,6 +53,9 @@ export default function Home() {
   const [showHistory, setShowHistory] = useState(false);
   const [currentFilename, setCurrentFilename] = useState('');
   const [inputMode, setInputMode] = useState<'upload' | 'url'>('upload');
+  const [guestUsed, setGuestUsed] = useState(0);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const MAX_GUEST = 3;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -99,9 +104,50 @@ export default function Home() {
     setFiles([]);
   };
 
+  // 设备指纹（用于 guest 限额）
+  const getDeviceKey = () => {
+    const fp = [navigator.userAgent, screen.width, screen.height, Intl.DateTimeFormat().resolvedOptions().timeZone].join('|');
+    let hash = 0;
+    for (let i = 0; i < fp.length; i++) { hash = ((hash << 5) - hash) + fp.charCodeAt(i); hash |= 0; }
+    return `sumify_guest_${Math.abs(hash)}`;
+  };
+
+  const checkGuestQuota = (): boolean => {
+    if (session) return true; // 登录用户不限制
+    const key = getDeviceKey();
+    const stored = localStorage.getItem(key);
+    if (!stored) return true;
+    const data = JSON.parse(stored);
+    const today = new Date().toDateString();
+    if (data.date !== today) return true;
+    return data.count < MAX_GUEST;
+  };
+
+  const useGuestQuota = () => {
+    if (session) return;
+    const key = getDeviceKey();
+    const stored = localStorage.getItem(key);
+    const today = new Date().toDateString();
+    let count = 0;
+    if (stored) {
+      const data = JSON.parse(stored);
+      if (data.date === today) count = data.count;
+    }
+    const newCount = count + 1;
+    localStorage.setItem(key, JSON.stringify({ date: today, count: newCount }));
+    setGuestUsed(newCount);
+  };
+
   useEffect(() => {
     const browserLang = navigator.language.toLowerCase();
     setLanguage(browserLang.startsWith('zh') ? 'zh' : 'en');
+    // 读取 guest 已用次数
+    const key = getDeviceKey();
+    const stored = localStorage.getItem(key);
+    if (stored) {
+      const data = JSON.parse(stored);
+      if (data.date === new Date().toDateString()) setGuestUsed(data.count);
+    }
   }, []);
 
   useEffect(() => {
@@ -177,7 +223,7 @@ export default function Home() {
   const renderPage = async (pageNum: number, canvas: HTMLCanvasElement) => {
     if (!pdfDoc) return;
     const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: 1.5 });
+    const viewport = page.getViewport({ scale: pdfScale });
     canvas.height = viewport.height;
     canvas.width = viewport.width;
     const context = canvas.getContext('2d');
@@ -194,7 +240,7 @@ export default function Home() {
     if (!pdfDoc || !showSidebar) return;
     const canvas = document.getElementById('pdf-canvas') as HTMLCanvasElement;
     if (canvas) renderPage(currentPage, canvas);
-  }, [pdfDoc, currentPage, showSidebar]);
+  }, [pdfDoc, currentPage, showSidebar, pdfScale]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
@@ -220,6 +266,11 @@ export default function Home() {
   }, []);
 
   const processFiles = async (filesToProcess: File[], filename: string) => {
+    // 检查 guest 配额
+    if (!checkGuestQuota()) {
+      setShowLoginPrompt(true);
+      return;
+    }
     setStatus('extracting');
     setError('');
     setProgress(0);
@@ -258,6 +309,7 @@ export default function Home() {
       setStatus('success');
       setStatusText('');
       saveToHistory({ filename, summary: data.summary, keywords: data.keywords || [], messages: [] });
+      useGuestQuota(); // 消耗一次 guest 配额（登录用户无效）
       if (filesToProcess.length > 0) loadPdfToSidebar(filesToProcess[0]);
     } catch (err) {
       setError(err instanceof Error ? err.message : '处理失败');
@@ -373,6 +425,12 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Guest 次数提示 */}
+            {!session && guestUsed > 0 && (
+              <span className="text-xs text-gray-400 hidden sm:block">
+                {language === 'zh' ? `今日剩余 ${MAX_GUEST - guestUsed} 次` : `${MAX_GUEST - guestUsed} left today`}
+              </span>
+            )}
             {sessionStatus !== 'loading' && (
               session ? (
                 <div className="flex items-center gap-2">
@@ -438,48 +496,37 @@ export default function Home() {
       {/* ── Main Content ── */}
       <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-8">
 
-        {/* ── Login Gate ── */}
-        {sessionStatus !== 'loading' && !session && (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-            <div className="text-6xl mb-6">📄</div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-3">
-              {language === 'zh' ? '和你的 PDF 对话' : 'Chat with your PDF'}
-            </h1>
-            <p className="text-gray-500 mb-8 max-w-sm">
-              {language === 'zh'
-                ? '登录后即可上传文档，AI 帮你读懂每一页，并保存你的历史记录'
-                : 'Sign in to upload documents, let AI understand every page and save your history'}
-            </p>
-            <button
-              onClick={() => signIn('google')}
-              className="flex items-center gap-3 px-6 py-3 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md transition-shadow text-gray-700 font-medium"
-            >
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-              </svg>
-              {language === 'zh' ? '用 Google 账号登录' : 'Sign in with Google'}
-            </button>
-            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-xl">
-              {[
-                { icon: '🎓', title: language === 'zh' ? '研究者' : 'Researchers', desc: language === 'zh' ? '快速从论文中提取关键发现' : 'Extract key findings from papers' },
-                { icon: '💼', title: language === 'zh' ? '职场人' : 'Professionals', desc: language === 'zh' ? '秒懂合同条款、财务报告' : 'Understand contracts and reports' },
-                { icon: '📚', title: language === 'zh' ? '学生' : 'Students', desc: language === 'zh' ? '教材讲义一键总结' : 'Summarize textbooks instantly' },
-              ].map((s, i) => (
-                <div key={i} className="bg-gray-50 rounded-xl p-4 text-center">
-                  <div className="text-2xl mb-2">{s.icon}</div>
-                  <p className="font-medium text-gray-800 text-sm mb-1">{s.title}</p>
-                  <p className="text-xs text-gray-500">{s.desc}</p>
-                </div>
-              ))}
+        {/* ── Login Prompt Modal (guest quota exceeded) ── */}
+        {showLoginPrompt && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowLoginPrompt(false)}>
+            <div className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl" onClick={e => e.stopPropagation()}>
+              <div className="text-4xl mb-4">🔒</div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                {language === 'zh' ? '今日免费次数已用完' : 'Daily free limit reached'}
+              </h2>
+              <p className="text-gray-500 text-sm mb-6">
+                {language === 'zh'
+                  ? `每天可免费使用 ${MAX_GUEST} 次，登录后无限使用并保存历史记录`
+                  : `Free users get ${MAX_GUEST} uses per day. Sign in for unlimited access and history.`}
+              </p>
+              <button
+                onClick={() => signIn('google')}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors mb-3"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24">
+                  <path fill="white" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="white" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="white" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                  <path fill="white" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                {language === 'zh' ? '用 Google 登录，免费无限用' : 'Sign in with Google — free & unlimited'}
+              </button>
+              <button onClick={() => setShowLoginPrompt(false)} className="text-sm text-gray-400 hover:text-gray-600">
+                {language === 'zh' ? '明天再来' : 'Come back tomorrow'}
+              </button>
             </div>
           </div>
         )}
-
-        {/* ── Logged in content ── */}
-        {session && (<>
 
         {/* ── IDLE: Hero + Upload ── */}
         {status === 'idle' && files.length === 0 && !summary && (
@@ -629,25 +676,61 @@ export default function Home() {
         {/* ── Success: Result + Chat ── */}
         {status === 'success' && summary && (
           <div className={`flex gap-6 ${showSidebar ? '' : ''}`}>
-            {/* PDF Sidebar */}
+            {/* PDF Sidebar — 右侧浮动抽屉 */}
             {showSidebar && pdfDoc && (
-              <div className="w-80 flex-shrink-0 bg-white border border-gray-200 rounded-xl overflow-hidden flex flex-col sticky top-20 h-[calc(100vh-6rem)]">
-                <div className="flex justify-between items-center px-4 py-3 border-b border-gray-100">
-                  <span className="text-sm font-medium text-gray-700">📄 PDF</span>
-                  <button onClick={() => setShowSidebar(false)} className="text-gray-400 hover:text-gray-600 text-sm">✕</button>
+              <div
+                className="fixed top-14 right-0 bottom-0 z-30 bg-white border-l border-gray-200 flex flex-col shadow-2xl transition-all"
+                style={{ width: sidebarWidth }}
+              >
+                {/* 拖拽调宽手柄 */}
+                <div
+                  className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-purple-400 transition-colors group"
+                  onMouseDown={e => {
+                    e.preventDefault();
+                    const startX = e.clientX;
+                    const startW = sidebarWidth;
+                    const onMove = (ev: MouseEvent) => {
+                      const delta = startX - ev.clientX;
+                      setSidebarWidth(Math.max(300, Math.min(700, startW + delta)));
+                    };
+                    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+                    window.addEventListener('mousemove', onMove);
+                    window.addEventListener('mouseup', onUp);
+                  }}
+                >
+                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-12 bg-gray-300 rounded-full group-hover:bg-purple-400" />
                 </div>
-                <div className="flex-1 overflow-auto bg-gray-50 flex justify-center p-3" ref={pdfViewerRef}>
-                  <canvas id="pdf-canvas" className="shadow-sm max-w-full" />
+
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 flex-shrink-0">
+                  <span className="text-sm font-medium text-gray-700 truncate max-w-[60%]">📄 {currentFilename}</span>
+                  <div className="flex items-center gap-2">
+                    {/* 缩放控制 */}
+                    <button onClick={() => setPdfScale(s => Math.max(0.5, s - 0.25))} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 text-sm">−</button>
+                    <span className="text-xs text-gray-400 w-10 text-center">{Math.round(pdfScale * 100)}%</span>
+                    <button onClick={() => setPdfScale(s => Math.min(3, s + 0.25))} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 text-sm">+</button>
+                    <button onClick={() => setShowSidebar(false)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400 ml-1">✕</button>
+                  </div>
                 </div>
-                <div className="flex justify-center items-center gap-3 px-4 py-2 border-t border-gray-100">
-                  <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30">◀</button>
-                  <span className="text-xs text-gray-500">{currentPage} / {totalPages}</span>
-                  <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30">▶</button>
+
+                {/* PDF Canvas */}
+                <div className="flex-1 overflow-auto bg-gray-100 flex justify-center p-4" ref={pdfViewerRef}>
+                  <canvas id="pdf-canvas" className="shadow-md" />
+                </div>
+
+                {/* Page Nav */}
+                <div className="flex justify-center items-center gap-3 px-4 py-2.5 border-t border-gray-100 flex-shrink-0 bg-white">
+                  <button onClick={() => goToPage(1)} disabled={currentPage <= 1} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-500 text-xs">⏮</button>
+                  <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-600">◀</button>
+                  <span className="text-sm text-gray-600 min-w-[4rem] text-center">{currentPage} / {totalPages}</span>
+                  <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-600">▶</button>
+                  <button onClick={() => goToPage(totalPages)} disabled={currentPage >= totalPages} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-500 text-xs">⏭</button>
                 </div>
               </div>
             )}
 
-            <div className="flex-1 min-w-0">
+            {/* 侧边栏打开时的内容区右边距 */}
+            <div className={`flex-1 min-w-0 transition-all`} style={showSidebar ? { marginRight: sidebarWidth } : {}}>
               {/* Toolbar */}
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <div className="flex items-center gap-2">
@@ -779,8 +862,6 @@ export default function Home() {
           </div>
         )}
 
-      {/* ── Footer ── */}
-        </>) /* end session && */}
       </main>
 
       <footer className="border-t border-gray-100 py-6 mt-8">
