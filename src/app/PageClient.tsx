@@ -313,23 +313,55 @@ export default function Home() {
       setStatus('processing');
       setStatusText(language === 'zh' ? '正在生成摘要...' : 'Generating summary...');
       setProgress(90);
+      setSummary(''); // 清空之前的内容，准备流式接收
+      setKeywords([]);
+      setMindmap(null);
 
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: allText, filename, batch: filesToProcess.length > 1, template, extractKeywords: true }),
+        body: JSON.stringify({ text: allText, filename, batch: filesToProcess.length > 1, template, extractKeywords: true, stream: true }),
       });
       if (!response.ok) throw new Error((await response.json()).error || '处理失败');
 
-      const data = await response.json();
-      setSummary(data.summary);
-      setKeywords(data.keywords || []);
-      setMindmap(data.mindmap || null);
+      // 流式处理响应
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      
+      if (!reader) throw new Error('无法读取响应');
+
+      let fullSummary = '';
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              
+              if (data.type === 'summary' && data.content) {
+                fullSummary += data.content;
+                setSummary(fullSummary);
+              } else if (data.type === 'keywords' && data.content) {
+                setKeywords(data.content);
+              } else if (data.type === 'mindmap' && data.content) {
+                setMindmap(data.content);
+              }
+            } catch {}
+          }
+        }
+      }
+
       setCurrentFilename(filename);
       setProgress(100);
       setStatus('success');
       setStatusText('');
-      saveToHistory({ filename, summary: data.summary, keywords: data.keywords || [], messages: [] });
+      saveToHistory({ filename, summary: fullSummary, keywords: [], messages: [] });
       useGuestQuota(); // 消耗一次 guest 配额（登录用户无效）
       if (filesToProcess.length > 0) loadPdfToSidebar(filesToProcess[0]);
     } catch (err) {
@@ -376,15 +408,52 @@ export default function Home() {
     setMessages(prev => [...prev, { role: 'user', content: questionText }]);
     setQuestion('');
     setIsAsking(true);
+    
+    // 添加空的 AI 回复占位
+    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
+    const assistantMsgIndex = messages.length; // 这里的 messages 还没更新，下面修正
+    
     try {
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: questionText, summary, history: messages }),
+        body: JSON.stringify({ question: questionText, summary, history: messages, stream: true }),
       });
       if (!response.ok) throw new Error((await response.json()).error || '提问失败');
-      const data = await response.json();
-      setMessages(prev => [...prev, { role: 'assistant', content: data.answer }]);
+
+      // 流式处理
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      
+      if (!reader) throw new Error('无法读取响应');
+
+      // 更新 messages 索引（因为上面添加了一个空消息）
+      const msgIndex = messages.length;
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        const lines = chunk.split('\n');
+        
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content) {
+                setMessages(prev => {
+                  const updated = [...prev];
+                  if (updated[msgIndex]) {
+                    updated[msgIndex] = { ...updated[msgIndex], content: updated[msgIndex].content + data.content };
+                  }
+                  return updated;
+                });
+              }
+            } catch {}
+          }
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '提问失败');
     } finally {
