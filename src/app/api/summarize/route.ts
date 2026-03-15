@@ -15,7 +15,7 @@ const MODELS = {
   'ernie-speed': { provider: 'baidu', endpoint: 'https://qianfan.baidubce.com/v2/chat/completions', apiKeyEnv: 'BAIDU_API_KEY' },
 };
 
-const DEFAULT_MODEL = 'deepseek-chat';
+const DEFAULT_MODEL = (process.env.DEFAULT_MODEL as keyof typeof MODELS) || 'glm-4-flash';
 
 // 流式调用 AI
 async function* streamAI(modelName: string, messages: { role: string; content: string }[]) {
@@ -115,11 +115,11 @@ async function callAI(modelName: string, messages: { role: string; content: stri
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { text, question, summary, model, template, extractKeywords, batch, stream } = body;
+    const { text, question, summary, model, template, extractKeywords, batch, stream, userEmail } = body;
     const selectedModel = model || DEFAULT_MODEL;
-    const useStream = stream !== false; // 默认启用流式
+    const useStream = stream !== false;
 
-    // 追问场景
+    // 追问场景（不消耗用量）
     if (question && summary) {
       const messages = [
         { role: 'system', content: '你是一个 PDF 文档助手，基于给定的摘要内容回答用户问题。如果问题超出摘要范围，请如实告知。请用中文回答。' },
@@ -147,9 +147,21 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // PDF 摘要场景
+    // PDF 摘要场景 — 先检查用量
     if (!text) {
       return NextResponse.json({ error: '缺少 PDF 文本内容' }, { status: 400 });
+    }
+
+    // 登录用户：通过 D1 检查用量
+    if (userEmail) {
+      const consumeRes = await fetch(`${request.nextUrl.origin}/api/user/consume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-user-email': userEmail },
+      });
+      if (!consumeRes.ok) {
+        const err = await consumeRes.json() as any;
+        return NextResponse.json({ error: err.message || 'No credits', upgrade: true }, { status: 402 });
+      }
     }
 
     const truncatedText = text.slice(0, 15000);
@@ -157,16 +169,16 @@ export async function POST(request: NextRequest) {
     let systemPrompt = '';
     switch (template) {
       case 'academic':
-        systemPrompt = '你是一个学术文献摘要助手。请生成结构化的学术摘要，包含：1）研究背景与目的；2）研究方法；3）主要发现；4）结论与意义。使用学术语言，保持客观严谨。在每个要点后用 [P页码] 标注来源页面，例如：[P3] 表示第3页。';
+        systemPrompt = '你是一个学术文献摘要助手。请生成结构化的学术摘要，包含：1）研究背景与目的；2）研究方法；3）主要发现；4）结论与意义。使用学术语言，保持客观严谨。页码标注规则：在每个要点末尾必须用 [P数字] 格式标注来源页码，例如 [P3] 表示第3页，[P12] 表示第12页，只用这个格式，不要用其他格式。';
         break;
       case 'business':
-        systemPrompt = '你是一个商业文档摘要助手。请生成商业报告摘要，包含：1）核心观点；2）关键数据与指标；3）行动建议；4）风险与机会。使用简洁专业的商业语言。在每个要点后用 [P页码] 标注来源页面，例如：[P3] 表示第3页。';
+        systemPrompt = '你是一个商业文档摘要助手。请生成商业报告摘要，包含：1）核心观点；2）关键数据与指标；3）行动建议；4）风险与机会。使用简洁专业的商业语言。页码标注规则：在每个要点末尾必须用 [P数字] 格式标注来源页码，例如 [P3] 表示第3页，[P12] 表示第12页，只用这个格式，不要用其他格式。';
         break;
       case 'simple':
-        systemPrompt = '你是一个文档摘要助手。请用最简单易懂的语言总结文档，包含：1）这篇文档讲什么；2）3-5个关键要点；3）为什么重要。避免专业术语，像给朋友解释一样。在每个要点后用 [P页码] 标注来源页面，例如：[P3] 表示第3页。';
+        systemPrompt = '你是一个文档摘要助手。请用最简单易懂的语言总结文档，包含：1）这篇文档讲什么；2）3-5个关键要点；3）为什么重要。避免专业术语，像给朋友解释一样。页码标注规则：在每个要点末尾必须用 [P数字] 格式标注来源页码，例如 [P3] 表示第3页，[P12] 表示第12页，只用这个格式，不要用其他格式。';
         break;
       default:
-        systemPrompt = '你是一个专业的文档摘要助手。请仔细阅读用户提供的文档内容，然后生成一个简洁、结构化的摘要。要求：1）用中文输出；2）包含文档的主要主题和目的；3）列出关键内容要点（3-5个）；4）标注文档类型。在每个要点后用 [P页码] 标注来源页面，例如：[P3] 表示第3页。';
+        systemPrompt = '你是一个专业的文档摘要助手。请仔细阅读用户提供的文档内容，然后生成一个简洁、结构化的摘要。要求：1）用中文输出；2）包含文档的主要主题和目的；3）列出关键内容要点（3-5个）；4）标注文档类型。页码标注规则：在每个要点末尾必须用 [P数字] 格式标注来源页码，例如 [P3] 表示第3页，[P12] 表示第12页，只用这个格式，不要用其他格式。';
     }
 
     if (batch) {
@@ -184,14 +196,14 @@ export async function POST(request: NextRequest) {
       const stream = new ReadableStream({
         async start(controller) {
           try {
-            // 先发送摘要流
+            // 流式发送摘要
             let fullSummary = '';
             for await (const chunk of streamAI(selectedModel, summaryMessages)) {
               fullSummary += chunk;
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'summary', content: chunk })}\n\n`));
             }
-            
-            // 提取关键词（非流式）
+
+            // 关键词提取（摘要完成后，仅一次 AI 调用）
             if (extractKeywords) {
               const keywordMessages = [
                 { role: 'system', content: '你是一个关键词提取助手。请从文档中提取 5-10 个最重要的关键词或短语，用逗号分隔，只返回关键词列表。' },
@@ -201,20 +213,6 @@ export async function POST(request: NextRequest) {
               const keywords = keywordResult.split(/[,，、]/).map((k: string) => k.trim()).filter((k: string) => k);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'keywords', content: keywords })}\n\n`));
             }
-
-            // 思维导图（非流式）
-            const mindmapMessages = [
-              { role: 'system', content: '你是一个思维导图生成助手。请根据文档内容生成一个思维导图结构。返回严格的 JSON 格式：{"name":"根主题","children":[{"name":"分支1","children":[{"name":"详情1"}]}]}。只返回 JSON。' },
-              { role: 'user', content: `文档内容：\n${truncatedText.slice(0, 8000)}` },
-            ];
-            try {
-              const mindmapResult = await callAI(selectedModel, mindmapMessages);
-              const jsonMatch = mindmapResult.match(/\{[\s\S]*\}/);
-              if (jsonMatch) {
-                const mindmap = JSON.parse(jsonMatch[0]);
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'mindmap', content: mindmap })}\n\n`));
-              }
-            } catch {}
 
             controller.enqueue(encoder.encode('data: [DONE]\n\n'));
           } catch (e) {
@@ -242,18 +240,7 @@ export async function POST(request: NextRequest) {
       keywords = keywordResult.split(/[,，、]/).map((k: string) => k.trim()).filter((k: string) => k);
     }
 
-    let mindmap = null;
-    try {
-      const mindmapMessages = [
-        { role: 'system', content: '你是一个思维导图生成助手。请根据文档内容生成一个思维导图结构。返回严格的 JSON 格式。只返回 JSON。' },
-        { role: 'user', content: `文档内容：\n${truncatedText.slice(0, 8000)}` },
-      ];
-      const mindmapResult = await callAI(selectedModel, mindmapMessages);
-      const jsonMatch = mindmapResult.match(/\{[\s\S]*\}/);
-      if (jsonMatch) mindmap = JSON.parse(jsonMatch[0]);
-    } catch {}
-
-    return NextResponse.json({ summary: aiSummary, keywords, mindmap });
+    return NextResponse.json({ summary: aiSummary, keywords });
 
   } catch (error) {
     console.error('API Error:', error);

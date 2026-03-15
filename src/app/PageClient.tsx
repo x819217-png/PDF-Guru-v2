@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { useSession, signIn, signOut } from 'next-auth/react';
+import { useSession, signIn, signOut } from '@/components/ClientProviders';
 import { translations, Language } from '@/lib/i18n';
 import MindMap from '@/components/MindMap';
 
@@ -18,6 +18,7 @@ interface HistoryItem {
   summary: string;
   keywords: string[];
   messages: Message[];
+  mindmap?: any;
   createdAt: number;
 }
 
@@ -33,6 +34,7 @@ export default function Home() {
   const [keywords, setKeywords] = useState<string[]>([]);
   const [mindmap, setMindmap] = useState<any>(null);
   const [showMindmap, setShowMindmap] = useState(false);
+  const [isMindmapLoading, setIsMindmapLoading] = useState(false);
   const [template, setTemplate] = useState<'default' | 'academic' | 'business' | 'simple'>('default');
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string>('');
@@ -44,7 +46,7 @@ export default function Home() {
   const [isAsking, setIsAsking] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(420);
-  const [pdfScale, setPdfScale] = useState(1.5);
+  const [pdfScale, setPdfScale] = useState(1.0);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
   const [pdfDoc, setPdfDoc] = useState<any>(null);
@@ -55,12 +57,15 @@ export default function Home() {
   const [inputMode, setInputMode] = useState<'upload' | 'url'>('upload');
   const [guestUsed, setGuestUsed] = useState(0);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [pdfPanelWidth, setPdfPanelWidth] = useState(600); // px
   const MAX_GUEST = 3;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const pdfViewerRef = useRef<HTMLDivElement>(null);
   const dropRef = useRef<HTMLDivElement>(null);
+  const isDraggingDivider = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const t = translations[language];
 
@@ -96,12 +101,18 @@ export default function Home() {
 
   const loadFromHistory = (item: HistoryItem) => {
     setSummary(item.summary);
-    setKeywords(item.keywords);
-    setMessages(item.messages);
+    setKeywords(item.keywords || []);
+    setMessages(item.messages || []);
+    setMindmap(item.mindmap || null);
+    setShowMindmap(!!item.mindmap);
     setCurrentFilename(item.filename);
     setStatus('success');
     setShowHistory(false);
     setFiles([]);
+    // 历史记录没有 PDF 文件，清空 pdfDoc
+    setPdfDoc(null);
+    setPdfFile(null);
+    setShowSidebar(false);
   };
 
   // 设备指纹（用于 guest 限额）
@@ -175,7 +186,7 @@ export default function Home() {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       fullText += textContent.items.map((item: any) => item.str).join(' ') + '\n\n';
-      setProgress(Math.round((i / pdf.numPages) * 50));
+      setProgress(Math.round((i / pdf.numPages) * 40)); // 0→40%
     }
     return fullText;
   };
@@ -189,7 +200,7 @@ export default function Home() {
     const numPages = Math.min(pdf.numPages, 10);
     for (let i = 1; i <= numPages; i++) {
       setStatusText(`${language === 'zh' ? '识别第' : 'Page'} ${i}/${numPages}...`);
-      setProgress(50 + Math.round((i / numPages) * 40));
+      setProgress(Math.round((i / numPages) * 40)); // OCR 0→40%
       const page = await pdf.getPage(i);
       const viewport = page.getViewport({ scale: 2.0 });
       const canvas = document.createElement('canvas');
@@ -223,15 +234,64 @@ export default function Home() {
   const renderPage = async (pageNum: number, canvas: HTMLCanvasElement) => {
     if (!pdfDoc) return;
     const page = await pdfDoc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: pdfScale });
+    // 固定最小宽度 500px，内容不被压缩，超出时容器横向滚动
+    const MIN_WIDTH = 500;
+    const container = canvas.parentElement;
+    const containerWidth = container && container.clientWidth > 50 ? container.clientWidth - 32 : MIN_WIDTH;
+    const renderWidth = Math.max(MIN_WIDTH, containerWidth);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const fitScale = renderWidth / baseViewport.width;
+    const finalScale = fitScale * pdfScale;
+    const viewport = page.getViewport({ scale: finalScale });
     canvas.height = viewport.height;
     canvas.width = viewport.width;
     const context = canvas.getContext('2d');
     if (context) await page.render({ canvasContext: context, viewport }).promise;
   };
 
+  const generateMindmap = async () => {
+    if (!summary || isMindmapLoading) return;
+    setIsMindmapLoading(true);
+    setShowMindmap(true);
+    try {
+      const response = await fetch('/api/mindmap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ summary, messages }),
+      });
+      if (!response.ok) throw new Error('生成失败');
+      const data = await response.json();
+      setMindmap(data.mindmap);
+    } catch {
+      setMindmap(null);
+    } finally {
+      setIsMindmapLoading(false);
+    }
+  };
+
   const goToPage = (pageNum: number) => {
     if (pageNum >= 1 && pageNum <= totalPages) setCurrentPage(pageNum);
+  };
+
+  const handleDividerMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    isDraggingDivider.current = true;
+    const startX = e.clientX;
+    const startWidth = pdfPanelWidth;
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!isDraggingDivider.current) return;
+      // 往左拖 → PDF 变宽（鼠标向左移动，deltaX 为负，宽度增加）
+      const delta = startX - ev.clientX;
+      const newWidth = Math.min(900, Math.max(300, startWidth + delta));
+      setPdfPanelWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      isDraggingDivider.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   };
 
   useEffect(() => { (window as any).scrollToPage = goToPage; }, [totalPages]);
@@ -241,6 +301,23 @@ export default function Home() {
     const canvas = document.getElementById('pdf-canvas') as HTMLCanvasElement;
     if (canvas) renderPage(currentPage, canvas);
   }, [pdfDoc, currentPage, showSidebar, pdfScale]);
+
+  // 当 showSidebar 变为 true 时，等 DOM 渲染后再绘制（多次重试确保容器宽度正确）
+  useEffect(() => {
+    if (!pdfDoc || !showSidebar) return;
+    let attempts = 0;
+    const tryRender = () => {
+      const canvas = document.getElementById('pdf-canvas') as HTMLCanvasElement;
+      const container = canvas?.parentElement;
+      if (canvas && container && container.clientWidth > 50) {
+        renderPage(currentPage, canvas);
+      } else if (attempts < 5) {
+        attempts++;
+        setTimeout(tryRender, 100);
+      }
+    };
+    setTimeout(tryRender, 50);
+  }, [showSidebar]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
   const handleDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
@@ -312,44 +389,60 @@ export default function Home() {
 
       setStatus('processing');
       setStatusText(language === 'zh' ? '正在生成摘要...' : 'Generating summary...');
-      setProgress(90);
-      setSummary(''); // 清空之前的内容，准备流式接收
+      setProgress(50); // 50% — 开始 AI
+      setSummary('');
       setKeywords([]);
       setMindmap(null);
 
       const response = await fetch('/api/summarize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: allText, filename, batch: filesToProcess.length > 1, template, extractKeywords: true, stream: true }),
+        body: JSON.stringify({
+          text: allText,
+          filename,
+          batch: filesToProcess.length > 1,
+          template,
+          extractKeywords: true,
+          stream: true,
+          userEmail: session?.user?.email || null,
+        }),
       });
-      if (!response.ok) throw new Error((await response.json()).error || '处理失败');
+      if (!response.ok) {
+        const errData = await response.json() as any;
+        if (errData.upgrade) { setShowLoginPrompt(true); setStatus('idle'); return; }
+        throw new Error(errData.error || '处理失败');
+      }
 
-      // 流式处理响应
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      
       if (!reader) throw new Error('无法读取响应');
 
       let fullSummary = '';
-      
+      let charCount = 0;
+      let finalKeywords: string[] = [];
+      let finalMindmap: any = null;
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
-        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
               const data = JSON.parse(line.slice(6));
-              
               if (data.type === 'summary' && data.content) {
                 fullSummary += data.content;
+                charCount += data.content.length;
                 setSummary(fullSummary);
+                // 50→95% 流式进度
+                setProgress(Math.min(95, 50 + Math.floor(charCount / 5)));
               } else if (data.type === 'keywords' && data.content) {
+                finalKeywords = data.content;
                 setKeywords(data.content);
+                setProgress(98);
               } else if (data.type === 'mindmap' && data.content) {
+                finalMindmap = data.content;
                 setMindmap(data.content);
               }
             } catch {}
@@ -361,8 +454,8 @@ export default function Home() {
       setProgress(100);
       setStatus('success');
       setStatusText('');
-      saveToHistory({ filename, summary: fullSummary, keywords: [], messages: [] });
-      useGuestQuota(); // 消耗一次 guest 配额（登录用户无效）
+      saveToHistory({ filename, summary: fullSummary, keywords: finalKeywords, messages: [], mindmap: finalMindmap || undefined });
+      useGuestQuota();
       if (filesToProcess.length > 0) loadPdfToSidebar(filesToProcess[0]);
     } catch (err) {
       setError(err instanceof Error ? err.message : '处理失败');
@@ -408,11 +501,14 @@ export default function Home() {
     setMessages(prev => [...prev, { role: 'user', content: questionText }]);
     setQuestion('');
     setIsAsking(true);
-    
-    // 添加空的 AI 回复占位
-    setMessages(prev => [...prev, { role: 'assistant', content: '' }]);
-    const assistantMsgIndex = messages.length; // 这里的 messages 还没更新，下面修正
-    
+
+    // 添加空的 AI 回复占位，记录当前 index
+    let msgIndex = -1;
+    setMessages(prev => {
+      msgIndex = prev.length + 1; // user msg + this assistant msg
+      return [...prev, { role: 'assistant', content: '' }];
+    });
+
     try {
       const response = await fetch('/api/summarize', {
         method: 'POST',
@@ -421,22 +517,15 @@ export default function Home() {
       });
       if (!response.ok) throw new Error((await response.json()).error || '提问失败');
 
-      // 流式处理
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-      
       if (!reader) throw new Error('无法读取响应');
 
-      // 更新 messages 索引（因为上面添加了一个空消息）
-      const msgIndex = messages.length;
-      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        
         const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split('\n');
-        
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             try {
@@ -444,8 +533,9 @@ export default function Home() {
               if (data.content) {
                 setMessages(prev => {
                   const updated = [...prev];
-                  if (updated[msgIndex]) {
-                    updated[msgIndex] = { ...updated[msgIndex], content: updated[msgIndex].content + data.content };
+                  const idx = updated.length - 1; // 最后一条就是 AI 占位
+                  if (updated[idx] && updated[idx].role === 'assistant') {
+                    updated[idx] = { ...updated[idx], content: updated[idx].content + data.content };
                   }
                   return updated;
                 });
@@ -515,6 +605,14 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* PDF 工具入口 — 所有人可见，显眼按钮 */}
+            <a
+              href="/tools"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
+            >
+              🛠️ {language === 'zh' ? 'PDF 工具箱' : 'PDF Tools'}
+            </a>
+
             {/* Guest 次数提示 */}
             {!session && guestUsed > 0 && (
               <span className="text-xs text-gray-400 hidden sm:block">
@@ -526,13 +624,16 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   {session.user?.image && <img src={session.user.image} alt="" className="w-7 h-7 rounded-full" />}
                   <span className="text-sm text-gray-600 hidden sm:block">{session.user?.name}</span>
+                  <a href="/dashboard" className="text-sm text-purple-600 hover:text-purple-700 px-2 py-1 rounded hover:bg-purple-50 hidden sm:block">
+                    {language === 'zh' ? '个人中心' : 'Dashboard'}
+                  </a>
                   <button onClick={() => signOut()} className="text-sm text-gray-500 hover:text-gray-700 px-2 py-1 rounded hover:bg-gray-100">
                     {language === 'zh' ? '退出' : 'Sign out'}
                   </button>
                 </div>
               ) : (
                 <button
-                  onClick={() => signIn('google')}
+                  onClick={() => signIn()}
                   className="flex items-center gap-2 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                 >
                   <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -570,6 +671,7 @@ export default function Home() {
                     <p className="text-sm font-medium text-gray-800 truncate">{item.filename}</p>
                     <p className="text-xs text-gray-400 mt-0.5">{new Date(item.createdAt).toLocaleDateString()}</p>
                     <p className="text-xs text-gray-500 mt-1 line-clamp-2">{item.summary.slice(0, 80)}...</p>
+                    <p className="text-xs text-amber-500 mt-1">📎 {language === 'zh' ? '需重新上传 PDF 以查看原文' : 'Re-upload PDF to view original'}</p>
                   </button>
                   <button onClick={() => deleteHistory(item.id)} className="text-gray-300 hover:text-red-400 mt-1 flex-shrink-0">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -584,35 +686,51 @@ export default function Home() {
       )}
 
       {/* ── Main Content ── */}
-      <main className="flex-1 max-w-5xl mx-auto w-full px-4 py-8">
+      <main className="flex-1 w-full px-4 py-6 max-w-[1400px] mx-auto">
 
         {/* ── Login Prompt Modal (guest quota exceeded) ── */}
         {showLoginPrompt && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowLoginPrompt(false)}>
             <div className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl" onClick={e => e.stopPropagation()}>
               <div className="text-4xl mb-4">🔒</div>
-              <h2 className="text-xl font-bold text-gray-900 mb-2">
-                {language === 'zh' ? '今日免费次数已用完' : 'Daily free limit reached'}
-              </h2>
-              <p className="text-gray-500 text-sm mb-6">
-                {language === 'zh'
-                  ? `每天可免费使用 ${MAX_GUEST} 次，登录后无限使用并保存历史记录`
-                  : `Free users get ${MAX_GUEST} uses per day. Sign in for unlimited access and history.`}
-              </p>
-              <button
-                onClick={() => signIn('google')}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors mb-3"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24">
-                  <path fill="white" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                  <path fill="white" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                  <path fill="white" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                  <path fill="white" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                </svg>
-                {language === 'zh' ? '用 Google 登录，免费无限用' : 'Sign in with Google — free & unlimited'}
-              </button>
+              {session ? (
+                <>
+                  <h2 className="text-xl font-bold text-gray-900 mb-2">
+                    {language === 'zh' ? '今日额度已用完' : 'Daily credits used up'}
+                  </h2>
+                  <p className="text-gray-500 text-sm mb-6">
+                    {language === 'zh' ? '升级 Pro 享无限次数，每月仅 $2.99' : 'Upgrade to Pro for unlimited use — $2.99/month'}
+                  </p>
+                  <a href="/pricing" className="block w-full px-4 py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors mb-3 text-center">
+                    {language === 'zh' ? '查看 Pro 方案' : 'View Pro Plan'}
+                  </a>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-xl font-bold text-gray-900 mb-2">
+                    {language === 'zh' ? '今日免费次数已用完' : 'Daily free limit reached'}
+                  </h2>
+                  <p className="text-gray-500 text-sm mb-6">
+                    {language === 'zh'
+                      ? `每天可免费使用 ${MAX_GUEST} 次，登录后注册送 3 次，每天再送 1 次`
+                      : `Free users get ${MAX_GUEST} uses/day. Sign in to get 3 credits + 1 daily`}
+                  </p>
+                  <button
+                    onClick={() => signIn()}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-purple-600 text-white rounded-xl font-medium hover:bg-purple-700 transition-colors mb-3"
+                  >
+                    <svg className="w-4 h-4" viewBox="0 0 24 24">
+                      <path fill="white" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                      <path fill="white" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                      <path fill="white" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                      <path fill="white" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                    </svg>
+                    {language === 'zh' ? '用 Google 登录' : 'Sign in with Google'}
+                  </button>
+                </>
+              )}
               <button onClick={() => setShowLoginPrompt(false)} className="text-sm text-gray-400 hover:text-gray-600">
-                {language === 'zh' ? '明天再来' : 'Come back tomorrow'}
+                {language === 'zh' ? '稍后再说' : 'Maybe later'}
               </button>
             </div>
           </div>
@@ -621,23 +739,18 @@ export default function Home() {
         {/* ── IDLE: Hero + Upload ── */}
         {status === 'idle' && files.length === 0 && !summary && (
           <div className="flex flex-col items-center">
-            {/* Hero */}
-            <div className="text-center mb-10 mt-4">
-              <h1 className="text-4xl font-bold text-gray-900 mb-3">
-                {language === 'zh' ? '和你的 PDF 对话' : 'Chat with your PDF'}
+            {/* Hero - 精简 */}
+            <div className="text-center mb-6">
+              <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
+                {language === 'zh' ? '让 PDF 变成会说话的朋友' : 'Make your PDF talk back'}
               </h1>
-              <p className="text-lg text-gray-500 max-w-xl mx-auto">
-                {language === 'zh'
-                  ? '上传文档，AI 帮你读懂每一页'
-                  : 'Upload a document, let AI understand every page for you'}
-              </p>
             </div>
 
-            {/* Upload Box */}
-            <div className="w-full max-w-2xl">
+            {/* Upload Box - 放大 */}
+            <div className="w-full max-w-3xl mx-auto">
               <div
                 ref={dropRef}
-                className={`relative border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
+                className={`relative border-2 border-dashed rounded-3xl p-12 text-center cursor-pointer transition-all ${
                   isDragOver ? 'border-purple-400 bg-purple-50' : 'border-gray-200 hover:border-purple-300 hover:bg-gray-50'
                 }`}
                 onDragOver={handleDragOver}
@@ -646,12 +759,16 @@ export default function Home() {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <input ref={fileInputRef} type="file" accept=".pdf" multiple className="hidden" onChange={handleFileSelect} />
-                <div className="text-5xl mb-4">📄</div>
-                <p className="text-lg font-medium text-gray-700 mb-1">
-                  {language === 'zh' ? '拖入 PDF，或点击上传' : 'Drop PDF here, or click to upload'}
+                <div className="w-20 h-20 mx-auto mb-4 bg-purple-100 rounded-full flex items-center justify-center">
+                  <svg className="w-10 h-10 text-purple-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <p className="text-xl font-semibold text-gray-700 mb-2">
+                  {language === 'zh' ? '拖入 PDF 文件，或点击上传' : 'Drop PDF here, or click to upload'}
                 </p>
                 <p className="text-sm text-gray-400">
-                  {language === 'zh' ? '支持扫描件 · 最多 10 个文件' : 'Scanned docs supported · Up to 10 files'}
+                  {language === 'zh' ? '支持扫描件 OCR识别 · 最多 10 个文件 · 最大 10MB' : 'Scanned docs supported · Up to 10 files · Max 10MB'}
                 </p>
               </div>
 
@@ -663,31 +780,16 @@ export default function Home() {
                   onChange={e => setPdfUrl(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleUrlSubmit()}
                   placeholder={language === 'zh' ? '或粘贴 PDF 链接...' : 'Or paste a PDF URL...'}
-                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                  className="flex-1 px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                 />
                 <button
                   onClick={handleUrlSubmit}
                   disabled={!pdfUrl.trim()}
-                  className="px-5 py-2.5 bg-purple-600 text-white rounded-xl text-sm font-medium hover:bg-purple-700 disabled:opacity-40 transition-colors"
+                  className="px-6 py-3 bg-purple-600 text-white rounded-xl text-sm font-medium hover:bg-purple-700 disabled:opacity-40 transition-colors"
                 >
                   {language === 'zh' ? '解析' : 'Parse'}
                 </button>
               </div>
-            </div>
-
-            {/* Scenarios */}
-            <div className="mt-12 grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-2xl">
-              {[
-                { icon: '🎓', title: language === 'zh' ? '研究者' : 'Researchers', desc: language === 'zh' ? '快速从论文中提取关键发现，不再逐页苦读' : 'Extract key findings from papers without reading every page' },
-                { icon: '💼', title: language === 'zh' ? '职场人' : 'Professionals', desc: language === 'zh' ? '秒懂合同条款、财务报告，开会前心里有数' : 'Understand contracts and reports before meetings' },
-                { icon: '📚', title: language === 'zh' ? '学生' : 'Students', desc: language === 'zh' ? '教材、讲义一键总结，复习效率翻倍' : 'Summarize textbooks and notes, double your study efficiency' },
-              ].map((s, i) => (
-                <div key={i} className="bg-gray-50 rounded-xl p-4 text-center">
-                  <div className="text-2xl mb-2">{s.icon}</div>
-                  <p className="font-medium text-gray-800 text-sm mb-1">{s.title}</p>
-                  <p className="text-xs text-gray-500 leading-relaxed">{s.desc}</p>
-                </div>
-              ))}
             </div>
           </div>
         )}
@@ -765,76 +867,42 @@ export default function Home() {
 
         {/* ── Success: Result + Chat ── */}
         {status === 'success' && summary && (
-          <div className={`flex gap-6 ${showSidebar ? '' : ''}`}>
-            {/* PDF Sidebar — 右侧浮动抽屉 */}
-            {showSidebar && pdfDoc && (
-              <div
-                className="fixed top-14 right-0 bottom-0 z-30 bg-white border-l border-gray-200 flex flex-col shadow-2xl transition-all"
-                style={{ width: sidebarWidth }}
-              >
-                {/* 拖拽调宽手柄 */}
-                <div
-                  className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-purple-400 transition-colors group"
-                  onMouseDown={e => {
-                    e.preventDefault();
-                    const startX = e.clientX;
-                    const startW = sidebarWidth;
-                    const onMove = (ev: MouseEvent) => {
-                      const delta = startX - ev.clientX;
-                      setSidebarWidth(Math.max(300, Math.min(700, startW + delta)));
-                    };
-                    const onUp = () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
-                    window.addEventListener('mousemove', onMove);
-                    window.addEventListener('mouseup', onUp);
-                  }}
-                >
-                  <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-12 bg-gray-300 rounded-full group-hover:bg-purple-400" />
-                </div>
+          <div className="relative">
 
-                {/* Header */}
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 flex-shrink-0">
-                  <span className="text-sm font-medium text-gray-700 truncate max-w-[60%]">📄 {currentFilename}</span>
-                  <div className="flex items-center gap-2">
-                    {/* 缩放控制 */}
-                    <button onClick={() => setPdfScale(s => Math.max(0.5, s - 0.25))} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 text-sm">−</button>
-                    <span className="text-xs text-gray-400 w-10 text-center">{Math.round(pdfScale * 100)}%</span>
-                    <button onClick={() => setPdfScale(s => Math.min(3, s + 0.25))} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 text-sm">+</button>
-                    <button onClick={() => setShowSidebar(false)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400 ml-1">✕</button>
-                  </div>
-                </div>
-
-                {/* PDF Canvas */}
-                <div className="flex-1 overflow-auto bg-gray-100 flex justify-center p-4" ref={pdfViewerRef}>
-                  <canvas id="pdf-canvas" className="shadow-md" />
-                </div>
-
-                {/* Page Nav */}
-                <div className="flex justify-center items-center gap-3 px-4 py-2.5 border-t border-gray-100 flex-shrink-0 bg-white">
-                  <button onClick={() => goToPage(1)} disabled={currentPage <= 1} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-500 text-xs">⏮</button>
-                  <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-600">◀</button>
-                  <span className="text-sm text-gray-600 min-w-[4rem] text-center">{currentPage} / {totalPages}</span>
-                  <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-600">▶</button>
-                  <button onClick={() => goToPage(totalPages)} disabled={currentPage >= totalPages} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-500 text-xs">⏭</button>
-                </div>
-              </div>
-            )}
-
-            {/* 侧边栏打开时的内容区右边距 */}
-            <div className={`flex-1 min-w-0 transition-all`} style={showSidebar ? { marginRight: sidebarWidth } : {}}>
+            {/* 摘要+对话区 — 全宽，不受 PDF 面板影响 */}
+            <div className={`w-full overflow-y-auto transition-all duration-200 ${showSidebar && pdfDoc ? 'pr-4' : ''}`}
+              style={showSidebar && pdfDoc ? { paddingRight: `${pdfPanelWidth + 16}px` } : undefined}
+            >
               {/* Toolbar */}
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-gray-700 truncate max-w-xs">{currentFilename}</span>
-                  {pdfDoc && (
-                    <button onClick={() => setShowSidebar(!showSidebar)} className={`text-xs px-2 py-1 rounded-lg border transition-colors ${showSidebar ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                      {language === 'zh' ? '对照' : 'Side by side'}
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium text-gray-600 truncate max-w-xs">{currentFilename}</span>
+                  {pdfDoc ? (
+                    <button onClick={() => setShowSidebar(!showSidebar)} className={`text-xs px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 ${showSidebar ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      {language === 'zh' ? '原文对照' : 'View PDF'}
                     </button>
+                  ) : (
+                    <label className="text-xs px-2.5 py-1 rounded-lg border border-dashed border-gray-300 text-gray-400 hover:bg-gray-50 cursor-pointer flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                      </svg>
+                      {language === 'zh' ? '上传 PDF 查看原文' : 'Upload PDF to view'}
+                      <input type="file" accept=".pdf" className="hidden" onChange={async e => {
+                        const f = e.target.files?.[0];
+                        if (f) { await loadPdfToSidebar(f); setShowSidebar(true); }
+                      }} />
+                    </label>
                   )}
-                  {mindmap && (
-                    <button onClick={() => setShowMindmap(!showMindmap)} className={`text-xs px-2 py-1 rounded-lg border transition-colors ${showMindmap ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
-                      🧠 {language === 'zh' ? '导图' : 'Mind map'}
-                    </button>
-                  )}
+                  <button
+                    onClick={() => mindmap ? setShowMindmap(!showMindmap) : generateMindmap()}
+                    disabled={isMindmapLoading}
+                    className={`text-xs px-2.5 py-1 rounded-lg border transition-colors flex items-center gap-1 ${showMindmap ? 'bg-purple-600 text-white border-purple-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'} disabled:opacity-50`}
+                  >
+                    🧠 {isMindmapLoading ? (language === 'zh' ? '生成中...' : 'Generating...') : (language === 'zh' ? '思维导图' : 'Mind map')}
+                  </button>
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => navigator.clipboard.writeText(summary)} className="text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50">
@@ -874,81 +942,163 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Summary */}
-              <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">{language === 'zh' ? '摘要' : 'Summary'}</h2>
-                <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap">{summary}</div>
-              </div>
-
-              {/* Chat */}
-              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100">
-                  <h3 className="text-sm font-semibold text-gray-700">💬 {language === 'zh' ? '继续提问' : 'Ask questions'}</h3>
-                </div>
-
-                {messages.length > 0 && (
-                  <div className="px-5 py-4 space-y-4 max-h-96 overflow-y-auto">
-                    {messages.map((msg, i) => (
-                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[80%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                          msg.role === 'user'
-                            ? 'bg-purple-600 text-white rounded-br-sm'
-                            : 'bg-gray-100 text-gray-800 rounded-bl-sm'
-                        }`}>
-                          {msg.content}
-                        </div>
+              {/* Chat — 核心区域 */}
+              <div className="bg-white border border-gray-200 rounded-xl overflow-hidden mb-4">
+                {/* 对话消息区 */}
+                <div className="px-4 py-4 space-y-4 min-h-[200px] max-h-[420px] overflow-y-auto">
+                  {messages.length === 0 && !isAsking && (
+                    <div className="flex flex-col items-center justify-center h-32 text-center">
+                      <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center mb-3">
+                        <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
                       </div>
-                    ))}
-                    {isAsking && (
-                      <div className="flex justify-start">
-                        <div className="bg-gray-100 px-4 py-2.5 rounded-2xl rounded-bl-sm">
-                          <span className="flex gap-1">
+                      <p className="text-sm text-gray-400">{language === 'zh' ? '对文档有任何疑问，直接问我' : 'Ask me anything about this document'}</p>
+                    </div>
+                  )}
+                  {messages.map((msg, i) => (
+                    <div key={i} className={`flex gap-2.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      {msg.role === 'assistant' && (
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-purple-500 to-purple-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <span className="text-white text-xs font-bold">AI</span>
+                        </div>
+                      )}
+                      <div className={`max-w-[78%] px-4 py-2.5 text-sm leading-relaxed ${
+                        msg.role === 'user'
+                          ? 'bg-purple-600 text-white rounded-2xl rounded-tr-sm'
+                          : 'bg-gray-50 border border-gray-100 text-gray-800 rounded-2xl rounded-tl-sm'
+                      }`}>
+                        <span className="whitespace-pre-wrap">{msg.content}</span>
+                        {msg.role === 'assistant' && msg.content === '' && isAsking && (
+                          <span className="inline-flex gap-1 ml-1">
                             <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                             <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                             <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                           </span>
-                        </div>
+                        )}
                       </div>
-                    )}
-                    <div ref={chatEndRef} />
-                  </div>
-                )}
+                      {msg.role === 'user' && (
+                        <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {isAsking && messages.length > 0 && messages[messages.length - 1]?.role === 'assistant' && messages[messages.length - 1]?.content === '' && null}
+                  <div ref={chatEndRef} />
+                </div>
 
-                {/* Suggested questions */}
-                {messages.length === 0 && (
-                  <div className="px-5 py-3 flex flex-wrap gap-2">
-                    {(language === 'zh'
-                      ? ['这篇文档的核心结论是什么？', '有哪些值得关注的风险点？', '用三句话总结给我听']
-                      : ['What are the key conclusions?', 'What are the main risks?', 'Summarize in 3 sentences']
-                    ).map((q, i) => (
-                      <button key={i} onClick={() => handleAskQuestion(q)} className="text-xs px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-full text-gray-600 hover:bg-purple-50 hover:border-purple-200 hover:text-purple-600 transition-colors">
-                        {q}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {/* 预设问题 — 始终显示 */}
+                <div className="px-4 pb-3 flex flex-wrap gap-1.5 border-t border-gray-50 pt-3">
+                  {(language === 'zh'
+                    ? ['核心结论是什么？', '有哪些风险点？', '用三句话总结', '有哪些关键数据？', '下一步行动建议？']
+                    : ['Key conclusions?', 'Main risks?', 'Summarize in 3 sentences', 'Key data points?', 'Next steps?']
+                  ).map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleAskQuestion(q)}
+                      disabled={isAsking}
+                      className="text-xs px-2.5 py-1 bg-gray-50 border border-gray-200 rounded-full text-gray-500 hover:bg-purple-50 hover:border-purple-200 hover:text-purple-600 transition-colors disabled:opacity-40"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
 
-                {/* Input */}
-                <div className="px-4 py-3 border-t border-gray-100 flex gap-2">
+                {/* 输入框 */}
+                <div className="px-4 pb-4 flex gap-2">
                   <input
                     type="text"
                     value={question}
                     onChange={e => setQuestion(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleAskQuestion()}
                     placeholder={language === 'zh' ? '问关于这份文档的任何问题...' : 'Ask anything about this document...'}
-                    className="flex-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent"
+                    className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-400 focus:border-transparent"
                     disabled={isAsking}
                   />
                   <button
                     onClick={() => handleAskQuestion()}
                     disabled={!question.trim() || isAsking}
-                    className="px-4 py-2 bg-purple-600 text-white rounded-xl text-sm font-medium hover:bg-purple-700 disabled:opacity-40 transition-colors"
+                    className="px-4 py-2.5 bg-purple-600 text-white rounded-xl text-sm font-medium hover:bg-purple-700 disabled:opacity-40 transition-colors flex items-center gap-1.5"
                   >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                    </svg>
                     {language === 'zh' ? '发送' : 'Send'}
                   </button>
                 </div>
               </div>
+
+              {/* Summary — 折叠式，默认展开 */}
+              <details open className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <summary className="px-5 py-3 cursor-pointer flex items-center justify-between select-none hover:bg-gray-50 transition-colors">
+                  <span className="text-sm font-semibold text-gray-700">{language === 'zh' ? '📄 文档摘要' : '📄 Summary'}</span>
+                  <svg className="w-4 h-4 text-gray-400 transition-transform details-chevron" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </summary>
+                <div className="px-5 pb-5 pt-2 prose prose-sm max-w-none text-gray-700 leading-relaxed border-t border-gray-100">
+                  {summary.split(/(\[(?:P|p|第)\s*\d+\s*(?:页)?\]|\((?:P|p)\s*\d+\))/g).map((part, i) => {
+                    const match = part.match(/\d+/);
+                    const isPageRef = /\[(?:P|p|第)\s*\d+\s*(?:页)?\]|\((?:P|p)\s*\d+\)/.test(part);
+                    if (isPageRef && match) {
+                      const page = parseInt(match[0]);
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => { goToPage(page); setShowSidebar(true); }}
+                          className="inline-flex items-center px-1.5 py-0.5 mx-0.5 text-xs bg-purple-100 text-purple-600 rounded hover:bg-purple-200 transition-colors font-medium cursor-pointer"
+                          title={`跳转到第 ${page} 页`}
+                        >
+                          📄P{page}
+                        </button>
+                      );
+                    }
+                    return <span key={i} className="whitespace-pre-wrap">{part}</span>;
+                  })}
+                </div>
+              </details>
             </div>
+
+            {/* PDF 面板 — 右侧 fixed 叠加，不挤压摘要区 */}
+            {pdfDoc && showSidebar && (
+              <div
+                className="fixed top-0 right-0 h-full flex z-30"
+                style={{ width: `${pdfPanelWidth}px` }}
+              >
+                {/* 拖拽分隔条 */}
+                <div
+                  ref={containerRef}
+                  onMouseDown={handleDividerMouseDown}
+                  className="w-2 flex-shrink-0 cursor-col-resize hover:bg-purple-400 bg-gray-300 transition-colors self-stretch"
+                  title={language === 'zh' ? '左右拖拽调整宽度' : 'Drag to resize'}
+                />
+                {/* PDF 内容 */}
+                <div className="flex-1 flex flex-col border-l border-gray-200 bg-white shadow-2xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 flex-shrink-0">
+                    <span className="text-sm font-medium text-gray-700 truncate">📄 {currentFilename}</span>
+                    <div className="flex items-center gap-1.5">
+                      <button onClick={() => setPdfScale(s => Math.max(0.5, s - 0.25))} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 text-sm">−</button>
+                      <span className="text-xs text-gray-400 w-10 text-center">{Math.round(pdfScale * 100)}%</span>
+                      <button onClick={() => setPdfScale(s => Math.min(3, s + 0.25))} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-500 text-sm">+</button>
+                      <button onClick={() => setShowSidebar(false)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-gray-100 text-gray-400">✕</button>
+                    </div>
+                  </div>
+                  <div className="flex-1 overflow-auto bg-gray-50 flex justify-center p-4" ref={pdfViewerRef}>
+                    <canvas id="pdf-canvas" className="shadow-lg" style={{ minWidth: '480px', height: 'auto' }} />
+                  </div>
+                  <div className="flex justify-center items-center gap-2 px-4 py-2.5 border-t border-gray-100 flex-shrink-0 bg-white">
+                    <button onClick={() => goToPage(1)} disabled={currentPage <= 1} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-500 text-xs">⏮</button>
+                    <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-600">◀</button>
+                    <span className="text-sm text-gray-600 min-w-[4rem] text-center">{currentPage} / {totalPages}</span>
+                    <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-600">▶</button>
+                    <button onClick={() => goToPage(totalPages)} disabled={currentPage >= totalPages} className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 text-gray-500 text-xs">⏭</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
